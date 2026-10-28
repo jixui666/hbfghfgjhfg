@@ -651,7 +651,7 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
                 folderHits += hits;
                 exfiled += hits;
             }
-            if ((start - 1) % 500 == 0) {
+            if ((start - 1) % 50 == 0) {
                 [self log:[NSString stringWithFormat:
                     @"%dAPPLE/IMG_%04d... exfil=%d probes=%d", folder, start, exfiled, scanned]];
             }
