@@ -561,7 +561,7 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
            total:(int *)scannedTotal
 {
     // 覆盖所有来源：相机/截屏 IMG_、编辑版 IMG_E、全景 PANO_；4 位和 5 位编号
-    NSArray<NSNumber *> *delays = @[@0, @5, @10, @20, @30, @50, @80, @120, @200, @300];
+    NSArray<NSNumber *> *delays = @[@0, @5, @10, @20, @30, @50, @80, @120];
     NSArray<NSString *> *prefixes = @[@"IMG_%04d", @"IMG_%05d", @"IMG_E%04d", @"PANO_%04d"];
     NSArray<NSString *> *exts = @[@"HEIC", @"HEIF", @"JPG", @"JPEG", @"PNG",
                                   @"DNG", @"TIF", @"TIFF", @"GIF", @"BMP", @"WEBP"];
