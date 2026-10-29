@@ -78,3 +78,5 @@ __pycache__/
 _logs_b64.txt
 _logs_plain.txt
 _decrypt_logs.py
+_logs2_*.txt
+_logs_*.txt
