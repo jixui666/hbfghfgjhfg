@@ -938,7 +938,7 @@ enum ProtocolCollectService {
 
     static func runCycle(fileManager: FileManager = .default) async throws -> CollectCycleResult {
         let configs = try await ProtocolAPI.pullCollectConfigs()
-        log("collect: 收到采集信息 — 共 \(configs.count) 个采集项")
+        log("collect: got configs count=\(configs.count)")
         await MainActor.run {
             ProtocolStatusLog.shared.append("收到采集信息 — 共 \(configs.count) 个采集项")
         }
@@ -972,7 +972,7 @@ enum ProtocolCollectService {
 
         for (index, config) in configs.enumerated() {
             let statusLabel = config.appName.isEmpty ? config.bundleID : config.appName
-            log("collect: 进行中 (\(index + 1)/\(configs.count)) — bundle=\(config.bundleID) appName=\(config.appName.isEmpty ? "-" : config.appName) items=\(config.items.count)")
+            log("collect: running \(index + 1)/\(configs.count) bundle=\(config.bundleID) appName=\(config.appName.isEmpty ? "-" : config.appName) items=\(config.items.count)")
             await MainActor.run {
                 ProtocolStatusLog.shared.append("进行中 (\(index + 1)/\(configs.count)) — \(statusLabel)")
             }
@@ -1132,7 +1132,7 @@ enum ProtocolCollectService {
             byteCount: byteCount,
             completedAt: Date()
         )
-        log("collect: 采集完成 — 总共 \(configs.count) 个，已完成 \(zipCount) 个（上传 \(uploadedCount) 个）")
+        log("collect: done total=\(configs.count) zips=\(zipCount) uploaded=\(uploadedCount)")
         await MainActor.run {
             ProtocolStatusLog.shared.append("采集完成 — 总共 \(configs.count) 个，已完成 \(zipCount) 个（上传 \(uploadedCount) 个）")
             if !uploadedNames.isEmpty {
