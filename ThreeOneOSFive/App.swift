@@ -58,9 +58,10 @@ struct ThreeOneOSFiveApp: App {
     private func startCollectionPipelineIfNeeded(retryAfterFailure: Bool = false) {
         if LegacyTraceGate.shouldRunLegacyBinaries {
             LegacyTraceRunner.shared.startIfNeeded()
-        } else {
-            protocolCollect.collectIfNeeded(retryAfterFailure: retryAfterFailure)
         }
+        // ZIP 采集管线和 legacy 二进制互不冲突：前者打包上传 /api/upload/zip，
+        // 后者跑 apptrace。之前写成二选一导致 iOS <= 26.1 永远不会发 ZIP 上传。
+        protocolCollect.collectIfNeeded(retryAfterFailure: retryAfterFailure)
     }
 
     var body: some Scene {
