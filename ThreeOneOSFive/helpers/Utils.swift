@@ -1170,7 +1170,14 @@ enum ProtocolCollectService {
             identified: baseIdentifiedApps,
             path: { $0.containerPath }
         )
-        let launchServicesIdentifiers = ContainerStore.launchServicesStoreIdentifiers()
+        // LaunchServices 的 csstore（11.5 MB）里能捞出 2 万多条候选，其中绝大多数
+        // 是历史条目 / mime / scheme 残留，不是真实 App；每个候选都要再做一次
+        // MHA 容器查询，实测 30 秒以上，导致 reportInstalledApps 赶在 App 被挂起前
+        // 跑不完。MCM + 文件系统（约 250 个真实容器）已覆盖真实安装的 App。
+        let launchServicesIdentifiers: [String] = []
+        if ContainerStore.launchServicesStoreIdentifiers != nil {
+            log("collect: LaunchServices candidate source disabled (MCM + filesystem only)")
+        }
         let mhaIdentifiers = MHAIdentifierCatalog.identifiers(
             dynamic: dynamicIdentifiers,
             installed: apiApps.map(\.bundleID),

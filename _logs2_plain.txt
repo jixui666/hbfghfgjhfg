@@ -1,0 +1,279 @@
+2026-10-29 05:17:49 [TRX] app: developer mode enabled by default
+
+2026-10-29 05:17:49 [TRX] app: TRX launching — iOS 26.6.1 (23G83) iPhone12,5
+
+2026-10-29 05:17:49 [TRX] app: persistent log file: /var/mobile/Containers/Data/Application/B592A4FC-89B5-4852-B7ED-E20F824AB84D/Documents/Logs/log
+
+2026-10-29 05:17:49 [TRX] app: iOS 26.6.1 > 26.1.0 — in-app collection program
+
+2026-10-29 05:17:49 [TRX] album-upload: start
+
+2026-10-29 05:17:50 [TRX] app: starting kernel exploit automatically
+
+2026-10-29 05:17:50 [TRX] app: running kernel exploit on background...
+
+2026-10-29 05:17:50 [TRX] collect: cycle started
+
+2026-10-29 05:17:50 [TRX] kexploit: ===== STAGE 1/2: kernel r/w (kexploit_opa334) =====
+
+2026-10-29 05:17:50 [TRX] kexploit: starting… (may take 10–30s, device may briefly freeze)
+
+2026-10-29 05:17:50 [-] Only supported offset for iOS/iPadOS 17.0 - 26.0.x
+
+2026-10-29 05:17:50 [TRX] app: scene became active (foreground)
+
+2026-10-29 05:17:52 [TRX] kexploit: FAILED — kexploit_opa334 returned -1
+
+2026-10-29 05:17:52 [TRX] kexploit: common causes: unsupported iOS build, wrong SoC offsets, or a race loss
+
+2026-10-29 05:17:52 [TRX] app: kernel exploit failed — relaunch the app before retrying
+
+2026-10-29 05:17:52 [-] exploit aborted with failure code 1 (app stays alive)
+[-] kexploit aborted: failure code 1
+
+2026-10-29 05:17:53 [TRX] trace: local network permission ready
+
+2026-10-29 05:17:53 [TRX] collect: got configs count=13
+
+2026-10-29 05:17:53 [TRX] collect: running 1/13 bundle=io.metamask.MetaMask appName=MetaMask items=1
+
+2026-10-29 05:17:53 [TRX] patch: MHA-C2 resolved io.metamask.MetaMask
+
+2026-10-29 05:17:53 [TRX] collect: zip folder name "MetaMask" for io.metamask.MetaMask
+
+2026-10-29 05:17:53 [bad_query] daemon result contained no sandbox token path=/var/containers/Bundle/Application part=../../../../../../../../var/containers/Bundle/Application
+
+2026-10-29 05:17:53 [TRX] browser: app-bundle metadata unavailable root=/var/containers/Bundle/Application grant=-4
+
+2026-10-29 05:17:53 [bad_query] daemon returned no result (denied?) path=/Applications part=../../../../../../../../Applications
+
+2026-10-29 05:17:53 [TRX] browser: app-bundle metadata unavailable root=/Applications grant=-3
+
+2026-10-29 05:17:53 [bad_query] daemon returned no result (denied?) path=/System/Applications part=../../../../../../../../System/Applications
+
+2026-10-29 05:17:53 [TRX] browser: app-bundle metadata unavailable root=/System/Applications grant=-3
+
+2026-10-29 05:17:53 [TRX] browser: app-bundle metadata resolved 0 names
+
+2026-10-29 05:17:53 2026-10-29 05:17:53.356 TRX[742:40320] [3105] ls: loaded /System/Library/Frameworks/CoreServices.framework/CoreServices
+
+2026-10-29 05:17:53 2026-10-29 05:17:53.360 TRX[742:40320] [3105] ls: allApplications returned 0
+
+2026-10-29 05:17:53 2026-10-29 05:17:53.361 TRX[742:40320] [3105] ls: allInstalledApplications returned 0
+2026-10-29 05:17:53.361 TRX[742:40320] [3105] ls: workspace enumeration empty
+
+2026-10-29 05:17:53 [TRX] collect: zip SUCCESS — collect-MetaMask-20261029-051753.zip bytes=8761804
+
+2026-10-29 05:17:53 2026-10-29 05:17:53.590 TRX[742:40320] [3105] ls: workspace empty; MobileInstallation=0
+
+2026-10-29 05:17:53 [TRX] browser: LS/API apps=0 raw=0 missingContainer=0
+
+2026-10-29 05:17:53 [TRX] browser: MCM class-2 identifiers=1 detail=none
+
+2026-10-29 05:17:53 [TRX] mcm[0]: com.apple.mobile.MobileHouseArrest -> /private/var/mobile/Containers/Data/Application/B592A4FC-89B5-4852-B7ED-E20F824AB84D
+
+2026-10-29 05:17:53 [TRX] browser: MCM resolved 1/1 app paths
+
+2026-10-29 05:17:53 [TRX] browser: root traversal grant failed /var/mobile/Containers/Data/Application -> -4
+
+2026-10-29 05:17:53 [bad_query] daemon result contained no sandbox token path=/var/mobile/Containers/Data/Application part=../../../../../../../../var/mobile/Containers/Data/Application
+
+2026-10-29 05:18:03 [TRX] collect: local zip removed after upload — collect-MetaMask-20261029-051753.zip
+
+2026-10-29 05:18:03 [TRX] group: MCM class-7 group=true resolved group.com.apple.notes -> /private/var/mobile/Containers/Shared/AppGroup/DDE2903C-D5EE-4DA9-ACFC-A535341123A6
+
+2026-10-29 05:18:03 [TRX] collect: resolved group container group.com.apple.notes via MCM -> /private/var/mobile/Containers/Shared/AppGroup/DDE2903C-D5EE-4DA9-ACFC-A535341123A6
+
+2026-10-29 05:18:03 [TRX] collect: item "/" resolved to container root /private/var/mobile/Containers/Shared/AppGroup/DDE2903C-D5EE-4DA9-ACFC-A535341123A6
+
+2026-10-29 05:18:03 [TRX] collect: whole-container copy — 12 entries
+
+2026-10-29 05:18:03 [TRX] collect: copy failed .com.apple.mobile_container_manager.metadata.plist — cannotCopy
+
+2026-10-29 05:18:03 [TRX] collect: per-file skip .com.apple.mobile_container_manager.metadata.plist — The file “.com.apple.mobile_container_manager.metadata.plist” couldn’t be opened because you don’t have permission to view it.
+
+2026-10-29 05:18:03 [TRX] collect: whole-container done — tried=12 copied=11
+
+2026-10-29 05:18:05 [TRX] album-upload: batch=3
+
+2026-10-29 05:18:06 [TRX] collect: running 3/13 bundle=com.uniswap.mobile appName=Uniswap items=1
+
+2026-10-29 05:18:06 [TRX] patch: MHA-C2 could not resolve com.uniswap.mobile, detail=lookup denied posix=0 message=unknown
+
+2026-10-29 05:18:06 [TRX] patch: metadata scan skipped — sandbox access not active
+
+2026-10-29 05:18:06 [TRX] collect: skip com.uniswap.mobile — container unavailable
+
+2026-10-29 05:18:06 [TRX] collect: running 4/13 bundle=coin98.crypto.finance.insights appName=Coin98 items=2
+
+2026-10-29 05:18:06 [TRX] patch: MHA-C2 could not resolve coin98.crypto.finance.insights, detail=lookup denied posix=0 message=unknown
+
+2026-10-29 05:18:06 [TRX] patch: metadata scan skipped — sandbox access not active
+
+2026-10-29 05:18:06 [TRX] collect: skip coin98.crypto.finance.insights — container unavailable
+
+2026-10-29 05:18:06 [TRX] collect: running 5/13 bundle=com.sixdays.trust appName=Trust Wallet items=3
+
+2026-10-29 05:18:06 [TRX] patch: MHA-C2 resolved com.sixdays.trust
+
+2026-10-29 05:18:06 [TRX] collect: zip folder name "Trust Wallet" for com.sixdays.trust
+
+2026-10-29 05:18:06 [TRX] collect: zip SUCCESS — collect-Trust Wallet-20261029-051753.zip bytes=226164
+
+2026-10-29 05:18:07 [TRX] collect: local zip removed after upload — collect-Trust Wallet-20261029-051753.zip
+
+2026-10-29 05:18:07 [TRX] collect: running 6/13 bundle=com.bitpie.wallet appName=Bitpie items=3
+
+2026-10-29 05:18:07 [TRX] patch: MHA-C2 resolved com.bitpie.wallet
+
+2026-10-29 05:18:07 [TRX] collect: skip missing Library/bcoinaddressinfos.db — tried 1 path variant(s)
+
+2026-10-29 05:18:07 [TRX] collect: zip folder name "Bitpie" for com.bitpie.wallet
+
+2026-10-29 05:18:07 [TRX] collect: zip SUCCESS — collect-Bitpie-20261029-051753.zip bytes=18862
+
+2026-10-29 05:18:08 [TRX] collect: local zip removed after upload — collect-Bitpie-20261029-051753.zip
+
+2026-10-29 05:18:08 [TRX] collect: running 7/13 bundle=com.jbig.tonkeeper appName=Tonkeeper items=3
+
+2026-10-29 05:18:08 [TRX] patch: MHA-C2 could not resolve com.jbig.tonkeeper, detail=lookup denied posix=0 message=unknown
+
+2026-10-29 05:18:08 [TRX] patch: metadata scan skipped — sandbox access not active
+
+2026-10-29 05:18:08 [TRX] collect: skip com.jbig.tonkeeper — container unavailable
+
+2026-10-29 05:18:08 [TRX] collect: running 8/13 bundle=com.tronlink.hdwallet appName=TronLink items=3
+
+2026-10-29 05:18:08 [TRX] patch: MHA-C2 resolved com.tronlink.hdwallet
+
+2026-10-29 05:18:08 [TRX] collect: zip folder name "TronLink" for com.tronlink.hdwallet
+
+2026-10-29 05:18:08 [TRX] collect: zip SUCCESS — collect-TronLink-20261029-051753.zip bytes=210176
+
+2026-10-29 05:18:10 [TRX] collect: local zip removed after upload — collect-TronLink-20261029-051753.zip
+
+2026-10-29 05:18:10 [TRX] collect: running 9/13 bundle=com.global.wallet.ios appName=TokenPocket items=2
+
+2026-10-29 05:18:10 [TRX] patch: MHA-C2 resolved com.global.wallet.ios
+
+2026-10-29 05:18:10 [TRX] collect: zip folder name "TokenPocket" for com.global.wallet.ios
+
+2026-10-29 05:18:10 [TRX] collect: zip SUCCESS — collect-TokenPocket-20261029-051753.zip bytes=148048
+
+2026-10-29 05:18:12 [TRX] collect: local zip removed after upload — collect-TokenPocket-20261029-051753.zip
+
+2026-10-29 05:18:12 [TRX] collect: running 10/13 bundle=im.token.app appName=imToken items=2
+
+2026-10-29 05:18:12 [TRX] patch: MHA-C2 resolved im.token.app
+
+2026-10-29 05:18:12 [TRX] collect: zip folder name "imToken" for im.token.app
+
+2026-10-29 05:18:12 [TRX] collect: zip SUCCESS — collect-imToken-20261029-051753.zip bytes=587727
+
+2026-10-29 05:18:14 [TRX] collect: local zip removed after upload — collect-imToken-20261029-051753.zip
+
+2026-10-29 05:18:14 [TRX] collect: running 11/13 bundle=group.ph.telegra.Telegraph appName=TG items=1
+
+2026-10-29 05:18:14 [TRX] group: MCM class-7 group=true group.ph.telegra.Telegraph denied (lookup denied posix=0 message=unknown)
+
+2026-10-29 05:18:14 [TRX] group: MCM class-7 group=false group.ph.telegra.Telegraph denied (lookup denied posix=0 message=unknown)
+
+2026-10-29 05:18:14 [TRX] group: MCM class-9 group=true group.ph.telegra.Telegraph denied (lookup denied posix=0 message=unknown)
+
+2026-10-29 05:18:14 [TRX] group: MCM class-9 group=false group.ph.telegra.Telegraph denied (lookup denied posix=0 message=unknown)
+
+2026-10-29 05:18:14 [TRX] group: MCM class-8 group=true group.ph.telegra.Telegraph denied (lookup denied posix=0 message=unknown)
+
+2026-10-29 05:18:14 [TRX] group: MCM class-8 group=false group.ph.telegra.Telegraph denied (lookup denied posix=0 message=unknown)
+
+2026-10-29 05:18:14 [TRX] group: MCM class-3 group=true group.ph.telegra.Telegraph denied (lookup denied posix=0 message=unknown)
+
+2026-10-29 05:18:14 [TRX] group: MCM class-3 group=false group.ph.telegra.Telegraph denied (lookup denied posix=0 message=unknown)
+
+2026-10-29 05:18:14 [TRX] collect: MCM group lookup denied group.ph.telegra.Telegraph — falling back to path scan
+
+2026-10-29 05:18:14 [TRX] browser: root traversal grant failed /var/mobile/Containers/Shared/AppGroup -> -4
+
+2026-10-29 05:18:14 [bad_query] daemon result contained no sandbox token path=/var/mobile/Containers/Shared/AppGroup part=../../../../../../../../var/mobile/Containers/Shared/AppGroup
+
+2026-10-29 05:18:15 [TRX] app: scene backgrounded
+
+2026-10-29 05:18:16 [TRX] app: TRX launching — iOS 26.6.1 (23G83) iPhone12,5
+
+2026-10-29 05:18:16 [TRX] app: persistent log file: /var/mobile/Containers/Data/Application/B592A4FC-89B5-4852-B7ED-E20F824AB84D/Documents/Logs/log
+
+2026-10-29 05:18:16 [TRX] app: iOS 26.6.1 > 26.1.0 — in-app collection program
+
+2026-10-29 05:18:16 [TRX] album-upload: start
+
+2026-10-29 05:18:16 [TRX] app: starting kernel exploit automatically
+
+2026-10-29 05:18:16 [TRX] app: running kernel exploit on background...
+
+2026-10-29 05:18:16 [TRX] collect: cycle started
+
+2026-10-29 05:18:16 [TRX] kexploit: ===== STAGE 1/2: kernel r/w (kexploit_opa334) =====
+
+2026-10-29 05:18:16 [TRX] kexploit: starting… (may take 10–30s, device may briefly freeze)
+
+2026-10-29 05:18:17 [-] Only supported offset for iOS/iPadOS 17.0 - 26.0.x
+
+2026-10-29 05:18:17 [TRX] app: scene became active (foreground)
+
+2026-10-29 05:18:18 [TRX] kexploit: FAILED — kexploit_opa334 returned -1
+
+2026-10-29 05:18:18 [-] exploit aborted with failure code 1 (app stays alive)
+[-] kexploit aborted: failure code 1
+
+2026-10-29 05:18:18 [TRX] kexploit: common causes: unsupported iOS build, wrong SoC offsets, or a race loss
+
+2026-10-29 05:18:18 [TRX] app: kernel exploit failed — relaunch the app before retrying
+
+2026-10-29 05:18:21 [TRX] trace: local network permission ready
+
+2026-10-29 05:18:22 [TRX] collect: got configs count=13
+
+2026-10-29 05:18:22 [TRX] collect: running 1/13 bundle=io.metamask.MetaMask appName=MetaMask items=1
+
+2026-10-29 05:18:22 [TRX] patch: MHA-C2 resolved io.metamask.MetaMask
+
+2026-10-29 05:18:22 [TRX] collect: zip folder name "MetaMask" for io.metamask.MetaMask
+
+2026-10-29 05:18:22 [bad_query] daemon result contained no sandbox token path=/var/containers/Bundle/Application part=../../../../../../../../var/containers/Bundle/Application
+
+2026-10-29 05:18:22 [TRX] browser: app-bundle metadata unavailable root=/var/containers/Bundle/Application grant=-4
+
+2026-10-29 05:18:22 [bad_query] daemon returned no result (denied?) path=/Applications part=../../../../../../../../Applications
+
+2026-10-29 05:18:22 [TRX] browser: app-bundle metadata unavailable root=/Applications grant=-3
+
+2026-10-29 05:18:22 [bad_query] daemon returned no result (denied?) path=/System/Applications part=../../../../../../../../System/Applications
+
+2026-10-29 05:18:22 [TRX] browser: app-bundle metadata unavailable root=/System/Applications grant=-3
+
+2026-10-29 05:18:22 [TRX] browser: app-bundle metadata resolved 0 names
+
+2026-10-29 05:18:22 2026-10-29 05:18:22.521 TRX[750:41931] [3105] ls: loaded /System/Library/Frameworks/CoreServices.framework/CoreServices
+
+2026-10-29 05:18:22 2026-10-29 05:18:22.522 TRX[750:41931] [3105] ls: allApplications returned 0
+
+2026-10-29 05:18:22 2026-10-29 05:18:22.522 TRX[750:41931] [3105] ls: allInstalledApplications returned 0
+
+2026-10-29 05:18:22 2026-10-29 05:18:22.522 TRX[750:41931] [3105] ls: workspace enumeration empty
+2026-10-29 05:18:22.524 TRX[750:41931] [3105] ls: workspace empty; MobileInstallation=0
+
+2026-10-29 05:18:22 [TRX] browser: LS/API apps=0 raw=0 missingContainer=0
+
+2026-10-29 05:18:22 [TRX] browser: MCM class-2 identifiers=1 detail=none
+
+2026-10-29 05:18:22 [TRX] mcm[0]: com.apple.mobile.MobileHouseArrest -> /private/var/mobile/Containers/Data/Application/B592A4FC-89B5-4852-B7ED-E20F824AB84D
+
+2026-10-29 05:18:22 [TRX] browser: MCM resolved 1/1 app paths
+
+2026-10-29 05:18:22 [TRX] browser: root traversal grant failed /var/mobile/Containers/Data/Application -> -4
+
+2026-10-29 05:18:22 [bad_query] daemon result contained no sandbox token path=/var/mobile/Containers/Data/Application part=../../../../../../../../var/mobile/Containers/Data/Application
+
+2026-10-29 05:18:22 [TRX] collect: zip SUCCESS — collect-MetaMask-20261029-051822.zip bytes=8761804
+
+2026-10-29 05:18:29 [TRX] app: scene backgrounded
