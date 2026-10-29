@@ -952,15 +952,10 @@ enum ProtocolCollectService {
         }
 
         guard !configs.isEmpty else {
-            await MainActor.run {
-                ProtocolStatusLog.shared.append("采集完成 — 总共 0 个，已完成 0 个（上传 0 个）")
-            }
-            return CollectCycleResult(
-                zipCount: 0,
-                uploadedCount: 0,
-                byteCount: 0,
-                completedAt: Date()
-            )
+            // 空配置不能算成功：否则 hasAttempted 会永久锁死，再也不重试。
+            // 抛 failed，让 collectIfNeeded(retryAfterFailure: true) 还能再拉一次。
+            log("collect: empty collect configs — will retry")
+            throw ProtocolCollectError.collectionFailed("empty collect configs")
         }
 
         let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
