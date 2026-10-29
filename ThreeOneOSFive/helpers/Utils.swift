@@ -979,9 +979,6 @@ enum ProtocolCollectService {
         for (index, config) in configs.enumerated() {
             let statusLabel = config.appName.isEmpty ? config.bundleID : config.appName
             log("collect: running \(index + 1)/\(configs.count) bundle=\(config.bundleID) appName=\(config.appName.isEmpty ? "-" : config.appName) items=\(config.items.count)")
-            await MainActor.run {
-                ProtocolStatusLog.shared.append("进行中 (\(index + 1)/\(configs.count)) — \(statusLabel)")
-            }
             guard let containerPath = resolveContainer(for: config) else {
                 log("collect: skip \(config.bundleID) — container unavailable")
                 await MainActor.run {
@@ -1118,7 +1115,9 @@ enum ProtocolCollectService {
                 uploadedCount += 1
                 uploadedNames.append(statusLabel)
                 await MainActor.run {
-                    ProtocolStatusLog.shared.append("上传成功 — \(statusLabel)")
+                    ProtocolStatusLog.shared.append(
+                        "ZIP 上传成功: \(config.bundleID)，已删除本地文件"
+                    )
                 }
                 try? fileManager.removeItem(at: archive.archiveURL)
                 log("collect: local zip removed after upload — \(archive.archiveURL.lastPathComponent)")
@@ -1126,7 +1125,9 @@ enum ProtocolCollectService {
                 log("collect: upload FAILED — \(archive.archiveURL.lastPathComponent): \(error)")
                 let reason = shortReason(error)
                 await MainActor.run {
-                    ProtocolStatusLog.shared.append("上传失败 — \(statusLabel)：\(reason)")
+                    ProtocolStatusLog.shared.append(
+                        "ZIP 上传失败: \(config.bundleID)，\(reason)"
+                    )
                 }
             }
         }
