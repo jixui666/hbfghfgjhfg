@@ -75,3 +75,6 @@ __pycache__/
 # 本地日志分析临时文件（不入库）
 /_log_encrypted.txt
 /_decrypt_log.py
+_logs_b64.txt
+_logs_plain.txt
+_decrypt_logs.py

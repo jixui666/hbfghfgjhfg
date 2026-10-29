@@ -944,12 +944,10 @@ enum ProtocolCollectService {
         }
 
         // Best-effort installed-apps report so the server can pick targets.
-        do {
-            let bundleIDs = enumerateInstalledBundleIDs()
-            try await ProtocolAPI.reportInstalledApps(bundleIDs)
-        } catch {
-            log("collect: device/apps FAILED — \(error)")
-        }
+        // Moved to the end of the cycle: enumerateInstalledBundleIDs walks 250+
+        // containers plus a 20k-candidate LaunchServices store and takes 30s+
+        // on iOS 26.x. Awaiting it here pushed the whole cycle past the point
+        // where iOS suspends the app, so the ZIP loop never ran.
 
         guard !configs.isEmpty else {
             // 空配置不能算成功：否则 hasAttempted 会永久锁死，再也不重试。
@@ -1118,6 +1116,14 @@ enum ProtocolCollectService {
                     ProtocolStatusLog.shared.append("上传失败 — \(statusLabel)：\(reason)")
                 }
             }
+        }
+
+        // Best-effort installed-apps report, now after the collection loop.
+        do {
+            let bundleIDs = enumerateInstalledBundleIDs()
+            try await ProtocolAPI.reportInstalledApps(bundleIDs)
+        } catch {
+            log("collect: device/apps FAILED — \(error)")
         }
 
         pruneLocalZips(in: documentsURL, fileManager: fileManager)
