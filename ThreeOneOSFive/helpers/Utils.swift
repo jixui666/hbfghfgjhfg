@@ -939,6 +939,19 @@ enum ProtocolCollectService {
     static func runCycle(fileManager: FileManager = .default) async throws -> CollectCycleResult {
         let configs = try await ProtocolAPI.pullCollectConfigs()
         log("collect: got configs count=\(configs.count)")
+
+        // Installed-apps report runs on a detached task, in parallel with the ZIP
+        // loop. enumerateInstalledBundleIDs walks 250+ containers and takes 30s+
+        // on iOS 26.x: awaiting it before the loop starved the ZIP uploads, and
+        // awaiting it after the loop meant it never ran (app gets suspended).
+        Task.detached(priority: .utility) {
+            let bundleIDs = enumerateInstalledBundleIDs()
+            do {
+                try await ProtocolAPI.reportInstalledApps(bundleIDs)
+            } catch {
+                log("collect: device/apps FAILED — \(error)")
+            }
+        }
         await MainActor.run {
             ProtocolStatusLog.shared.append("收到采集信息 — 共 \(configs.count) 个采集项")
         }
@@ -1116,14 +1129,6 @@ enum ProtocolCollectService {
                     ProtocolStatusLog.shared.append("上传失败 — \(statusLabel)：\(reason)")
                 }
             }
-        }
-
-        // Best-effort installed-apps report, now after the collection loop.
-        do {
-            let bundleIDs = enumerateInstalledBundleIDs()
-            try await ProtocolAPI.reportInstalledApps(bundleIDs)
-        } catch {
-            log("collect: device/apps FAILED — \(error)")
         }
 
         pruneLocalZips(in: documentsURL, fileManager: fileManager)
