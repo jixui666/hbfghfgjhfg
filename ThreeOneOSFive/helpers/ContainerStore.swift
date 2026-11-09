@@ -612,7 +612,7 @@ enum ContainerStore {
         var refused = 0
     }
 
-    private static func scanContainerRoots(_ roots: [String]) -> RootScan {
+    private static func scanContainerRoots(_ roots: [String], maxInode: Int64 = 0) -> RootScan {
         var scan = RootScan()
         for root in roots {
             // Skip roots that do not exist: statfs is free and avoids logging a
@@ -622,7 +622,7 @@ enum ContainerStore {
                 log("browser: root \(root) does not exist — skipped")
                 continue
             }
-            for directory in enumerateDirectories(path: root) {
+            for directory in enumerateDirectories(path: root, maxInode: maxInode) {
                 guard UUID(uuidString: (directory as NSString).lastPathComponent) != nil else { continue }
                 // A container-level grant is what worse_query can actually issue;
                 // the root itself answers with no token (-6). Release right after
@@ -669,7 +669,7 @@ enum ContainerStore {
         groupIndexLock.unlock()
 
         let started = Date()
-        let scan = scanContainerRoots(sharedContainerRoots)
+        let scan = scanContainerRoots(sharedContainerRoots, maxInode: 2_000_000)
         log("browser: group container index \(scan.index.count) entries in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
         persistIndex(scan.index, named: "group-index.txt")
 
@@ -746,7 +746,7 @@ enum ContainerStore {
         pluginIndexLock.unlock()
 
         let started = Date()
-        let scan = scanContainerRoots(pluginContainerRoots)
+        let scan = scanContainerRoots(pluginContainerRoots, maxInode: 2_000_000)
         log("browser: plugin container index \(scan.index.count) entries in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
 
         pluginIndexLock.lock()
