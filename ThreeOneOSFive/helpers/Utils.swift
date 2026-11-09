@@ -977,10 +977,6 @@ enum ProtocolCollectService {
 
         let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let stamp = timestampString()
-        var zipCount = 0
-        var uploadedCount = 0
-        var uploadedNames: [String] = []
-        var byteCount: Int64 = 0
 
         let byID = Dictionary(configs.map { ($0.bundleID, $0) }, uniquingKeysWith: { first, _ in first })
         var pending = Set(byID.keys)
