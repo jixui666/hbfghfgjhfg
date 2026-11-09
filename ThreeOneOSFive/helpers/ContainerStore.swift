@@ -266,6 +266,24 @@ enum ContainerStore {
     private static let containerIndexTTL: TimeInterval = 300
     private static var indexBuildInProgress = false
 
+    /// Direct container enumeration through containermanagerd. Returns
+    /// identifier -> container path; empty when every class/flags/part
+    /// combination is refused (which is what the 27.x builds did so far).
+    /// A non-empty result removes the need for any inode walk.
+    static func mcmEnumeratedContainerIndex() -> [String: String] {
+        var error: NSString?
+        let map = MCMEnumerateContainers(&error) as? [String: String] ?? [:]
+        if !map.isEmpty {
+            log("browser: MCM enumerate produced \(map.count) containers")
+            DebugLogWriter.shared.write("browser: MCM enumerate produced \(map.count) containers")
+        } else {
+            let detail = (error as String?)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "no detail"
+            log("browser: MCM enumerate refused — \(detail.isEmpty ? "no diagnostic" : detail)")
+            DebugLogWriter.shared.write("browser: MCM enumerate refused — \(detail.isEmpty ? "no diagnostic" : detail)")
+        }
+        return map
+    }
+
     /// bundle id -> container path.
     ///
     /// * seeded from the previous run's `container-index.txt` so the first
@@ -310,7 +328,13 @@ enum ContainerStore {
         indexLock.unlock()
 
         let started = Date()
-        let fresh = buildContainerIndex()
+        // Fastest route first: ask containermanagerd to enumerate containers
+        // (identifier + path). Only if every class/flags/part combination is
+        // refused do we fall back to walking inodes.
+        var fresh = mcmEnumeratedContainerIndex()
+        if fresh.isEmpty {
+            fresh = buildContainerIndex()
+        }
         let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
         log("browser: container index \(fresh.count) entries in \(elapsed)s")
         persistIndex(fresh, named: "container-index.txt")
