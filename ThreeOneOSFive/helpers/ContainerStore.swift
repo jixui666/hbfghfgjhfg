@@ -197,6 +197,13 @@ enum ContainerStore {
                 retainAccess(path)
                 return ContainerDiscoveryMerger.canonicalPath(path)
             }
+            // Say *why* it missed: not installed, or spelled differently.
+            let nearest = nearestIdentifier(for: bundleID, in: index.keys)
+            let sample = index.keys.sorted().prefix(20).joined(separator: ",")
+            log("patch: \(bundleID) missing from container index (\(index.count) entries, nearest=\(nearest ?? "none"))")
+            DebugLogWriter.shared.write(
+                "patch: \(bundleID) missing from index (\(index.count) entries) nearest=\(nearest ?? "none") sample=[\(sample)]"
+            )
             // A non-empty index is authoritative: rescanning all roots for every
             // missing bundle id is what burned the collection window on 27.x.
             return nil
@@ -347,6 +354,71 @@ enum ContainerStore {
             }
         }
         return scan
+    }
+
+    // Lazily built index for App Group / System Group containers (group.* targets).
+    private static let groupIndexLock = NSLock()
+    private static var groupIndexStorage: [String: String] = [:]
+    private static var groupIndexBuilt = false
+    private static var groupIndexBuilding = false
+
+    static let sharedContainerRoots = [
+        "/var/mobile/Containers/Shared/AppGroup",
+        "/var/mobile/Containers/Shared/SystemGroup",
+        "/var/containers/Shared/SystemGroup"
+    ]
+
+    static func groupContainerIndexSnapshot() -> [String: String] {
+        groupIndexLock.lock()
+        if groupIndexBuilt {
+            let snapshot = groupIndexStorage
+            groupIndexLock.unlock()
+            return snapshot
+        }
+        if groupIndexBuilding {
+            groupIndexLock.unlock()
+            return [:]
+        }
+        groupIndexBuilding = true
+        groupIndexLock.unlock()
+
+        let started = Date()
+        let scan = scanContainerRoots(sharedContainerRoots)
+        log("browser: group container index \(scan.index.count) entries in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
+
+        groupIndexLock.lock()
+        groupIndexStorage = scan.index
+        groupIndexBuilt = true
+        groupIndexBuilding = false
+        groupIndexLock.unlock()
+        return scan.index
+    }
+
+    /// Closest identifier in `candidates` (prefix / containment match), used to
+    /// tell "app not installed" apart from "bundle id spelled differently".
+    static func nearestIdentifier(for target: String, in candidates: some Sequence<String>) -> String? {
+        let lowered = target.lowercased()
+        var best: (score: Int, identifier: String)?
+        for candidate in candidates {
+            let other = candidate.lowercased()
+            var score = 0
+            if other == lowered { score = 100 }
+            else if other.hasPrefix(lowered) || lowered.hasPrefix(other) { score = 80 }
+            else if other.contains(lowered) || lowered.contains(other) { score = 60 }
+            else {
+                // Shared leading components, e.g. com.sixdays.trust vs com.sixdays.trust.wallet
+                let a = lowered.split(separator: ".").map(String.init)
+                let b = other.split(separator: ".").map(String.init)
+                var shared = 0
+                while shared < min(a.count, b.count), a[shared] == b[shared] { shared += 1 }
+                score = shared >= 2 ? shared * 10 : 0
+            }
+            guard score > 0 else { continue }
+            if best == nil || score > best!.score {
+                best = (score, candidate)
+            }
+        }
+        return best?.identifier
     }
 
     // Lazily built index for extension / daemon containers.
@@ -737,9 +809,11 @@ enum ContainerStore {
 
         let started = Date()
         var entries = inodeWalk(clean, maxInode: maxInode)
-        // 27.x carries ~230 containers; if the first bound found suspiciously
-        // little, widen once instead of assuming the root is empty.
-        if entries.count < 32, maxInode < 2_000_000 {
+        // Only widen when the walk found nothing at all: an empty-looking root is
+        // what a too-small bound produces, while a root with a handful of entries
+        // (InternalDaemon: 13) already proved the bound is fine. Widening on
+        // "count < 32" cost 11 s per such root.
+        if entries.isEmpty, maxInode < 2_000_000 {
             entries = inodeWalk(clean, maxInode: 2_000_000)
         }
         let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))

