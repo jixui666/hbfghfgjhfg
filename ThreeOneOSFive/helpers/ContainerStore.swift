@@ -275,7 +275,7 @@ enum ContainerStore {
                 let snapshot = containerIndex
                 let built = containerIndexBuiltAt != nil
                 indexLock.unlock()
-                if !still { return built ? snapshot : [] }
+                if !still { return built ? snapshot : [:] }
             }
             return [:]
         }
