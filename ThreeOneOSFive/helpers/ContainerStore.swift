@@ -147,6 +147,30 @@ enum ContainerStore {
         log("patch: LS proxy has no container for \(bundleID)")
         DebugLogWriter.shared.write("patch: LS proxy has no container for \(bundleID)")
 
+        // 1. Targeted containermanagerd lookup: 7 classes × group/plain × 6 flag
+        //    words × 2 parts, for this one identifier. A lookup only has to pass
+        //    the per-identifier entitlement check, so it can succeed where
+        //    enumeration (which is filtered to our own containers) cannot.
+        var targetedDiag: NSString?
+        if let resolved = MCMResolveContainerPathForIdentifier(bundleID, &targetedDiag) {
+            var path = resolved
+            if path.hasSuffix("/Library/Caches") {
+                path = String(path.dropLast("/Library/Caches".count))
+            }
+            if isContainerPath(path) || isApplicationContainerPath(path) {
+                let canonical = ContainerDiscoveryMerger.canonicalPath(path)
+                log("patch: MCM targeted lookup resolved \(bundleID) -> \(canonical)")
+                DebugLogWriter.shared.write("patch: MCM targeted resolved \(bundleID) -> \(canonical)")
+                retainAccess(canonical)
+                return canonical
+            }
+            log("patch: MCM targeted lookup returned unexpected path for \(bundleID): \(path)")
+        } else {
+            let detail = (targetedDiag as String?) ?? "no detail"
+            log("patch: MCM targeted lookup refused \(bundleID) — \(detail)")
+            DebugLogWriter.shared.write("patch: MCM targeted refused \(bundleID) — \(detail.prefix(240))")
+        }
+
         if let path = MCMActivateContainerPath(2, bundleID, false, &lookupError),
            isApplicationContainerPath(path) {
             log("patch: MHA-C2 resolved \(bundleID)")
