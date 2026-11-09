@@ -147,30 +147,6 @@ enum ContainerStore {
         log("patch: LS proxy has no container for \(bundleID)")
         DebugLogWriter.shared.write("patch: LS proxy has no container for \(bundleID)")
 
-        // 1. Targeted containermanagerd lookup: 7 classes × group/plain × 6 flag
-        //    words × 2 parts, for this one identifier. A lookup only has to pass
-        //    the per-identifier entitlement check, so it can succeed where
-        //    enumeration (which is filtered to our own containers) cannot.
-        var targetedDiag: NSString?
-        if let resolved = MCMResolveContainerPathForIdentifier(bundleID, &targetedDiag) {
-            var path = resolved
-            if path.hasSuffix("/Library/Caches") {
-                path = String(path.dropLast("/Library/Caches".count))
-            }
-            if isContainerPath(path) || isApplicationContainerPath(path) {
-                let canonical = ContainerDiscoveryMerger.canonicalPath(path)
-                log("patch: MCM targeted lookup resolved \(bundleID) -> \(canonical)")
-                DebugLogWriter.shared.write("patch: MCM targeted resolved \(bundleID) -> \(canonical)")
-                retainAccess(canonical)
-                return canonical
-            }
-            log("patch: MCM targeted lookup returned unexpected path for \(bundleID): \(path)")
-        } else {
-            let detail = (targetedDiag as String?) ?? "no detail"
-            log("patch: MCM targeted lookup refused \(bundleID) — \(detail)")
-            DebugLogWriter.shared.write("patch: MCM targeted refused \(bundleID) — \(detail.prefix(240))")
-        }
-
         if let path = MCMActivateContainerPath(2, bundleID, false, &lookupError),
            isApplicationContainerPath(path) {
             log("patch: MHA-C2 resolved \(bundleID)")
@@ -352,12 +328,13 @@ enum ContainerStore {
         indexLock.unlock()
 
         let started = Date()
-        // Fastest route first: ask containermanagerd to enumerate containers
-        // (identifier + path). Only if every class/flags/part combination is
-        // refused do we fall back to walking inodes.
-        var fresh = mcmEnumeratedContainerIndex()
-        if fresh.isEmpty {
-            fresh = buildContainerIndex()
+        // Always walk the inode range: containermanagerd enumeration is filtered
+        // to our own containers, so it can only ever return a handful of entries
+        // and must not short-circuit the index.
+        var fresh = buildContainerIndex()
+        let enumerated = mcmEnumeratedContainerIndex()
+        for (identifier, path) in enumerated where fresh[identifier] == nil {
+            fresh[identifier] = path
         }
         let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
         log("browser: container index \(fresh.count) entries in \(elapsed)s")
@@ -1107,32 +1084,27 @@ enum ContainerStore {
     /// ranges are empty (plus a mandatory floor so a sparse layout cannot end
     /// the walk before the third-party containers).
     private static func inodeWalkSegmented(_ path: String) -> (entries: [String], scannedTo: Int64) {
-        // Scan plan instead of a blind full-range sweep. On 27.x the volume's
-        // inode counter is in the tens of millions (our own container sits at
-        // ~36M), so a 1M-at-a-time loop over everything never finishes inside the
-        // app's foreground window — and scanning three roots that way took 45 s.
-        //
-        //  * low range  : system-app containers, created when the OS was set up
-        //  * own neighbourhood : containers of apps installed around the same time
-        //    as this one (a few million inodes below our own container)
+        // Single sweep up to 50M inodes. The device's counters live in the tens of
+        // millions (own container was at 36,272,473), so this bound covers every
+        // container on the volume, including apps installed after this one.
         let ownInode = selfContainerInode()
-        var ranges: [(from: Int64, to: Int64)] = [(1, 1_000_000)]
-        if ownInode > 0 {
-            let low = max(1, ownInode - 6_000_000)
-            let high = ownInode + 1_000_000
-            ranges.append((low, high))
-        }
-        log("enumerate: \(path) own container inode=\(ownInode), ranges=\(ranges.map { "\($0.from)-\($0.to)" }.joined(separator: ","))")
+        let ceiling: Int64 = 50_000_000
+        log("enumerate: \(path) own container inode=\(ownInode), range=1-\(ceiling)")
 
         var entries: [String] = []
         var seen = Set<String>()
         var scannedTo: Int64 = 0
-        for range in ranges {
-            let chunk = inodeWalk(path, from: range.from, to: range.to)
+        // 4M per step so progress is logged and partial results survive a
+        // suspension.
+        var cursor: Int64 = 1
+        while cursor <= ceiling {
+            let to = min(cursor + 4_000_000 - 1, ceiling)
+            let chunk = inodeWalk(path, from: cursor, to: to)
             for entry in chunk where seen.insert(entry).inserted {
                 entries.append(entry)
             }
-            scannedTo = max(scannedTo, range.to)
+            scannedTo = to
+            cursor = to + 1
         }
         return (entries, scannedTo)
     }
@@ -1149,7 +1121,7 @@ enum ContainerStore {
 
     private static func inodeWalk(_ path: String, from: Int64, to: Int64) -> [String] {
         guard from <= to else { return [] }
-        let shards = 32
+        let shards = 48
         let span = to - from + 1
         let perShard = max(1, span / Int64(shards))
         var results = [[String]](repeating: [], count: shards)

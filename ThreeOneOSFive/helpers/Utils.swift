@@ -954,10 +954,13 @@ enum ProtocolCollectService {
         // swept in 4M windows across foreground cycles.
         ContainerStore.startBackgroundContainerScan()
 
-        // No index warm-up here: each bundle is first resolved through the
-        // LaunchServices proxy, which answers for a single bundle id without any
-        // inode walk. The container index is built on demand, and only for the
-        // bundles that route could not answer.
+        // Wait for the inode index (1 – 50M) before the loop so the first cycle
+        // can actually resolve the bundles instead of skipping them.
+        let index = await Task.detached(priority: .userInitiated) {
+            ContainerStore.containerIndexSnapshot(waitForBuild: true)
+        }.value
+        log("collect: container index ready — \(index.count) bundles")
+        DebugLogWriter.shared.write("collect: container index \(index.count) bundles")
 
         await MainActor.run {
             ProtocolStatusLog.shared.append("收到采集信息 — 共 \(configs.count) 个采集项")
