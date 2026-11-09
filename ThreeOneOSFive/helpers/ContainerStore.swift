@@ -347,6 +347,7 @@ enum ContainerStore {
             log("browser: container index build produced nothing — keeping \(kept.count) entries")
             DebugLogWriter.shared.write("browser: index build empty — keeping \(kept.count) entries")
             startBackgroundContainerScan()
+            notifyScanCompletion()
             return kept
         }
         containerIndex = fresh
@@ -355,6 +356,7 @@ enum ContainerStore {
         indexLock.unlock()
         persistIndex(fresh, named: "container-index.txt")
         startBackgroundContainerScan()
+        notifyScanCompletion()
         return fresh
     }
 
@@ -362,6 +364,40 @@ enum ContainerStore {
         indexLock.lock()
         defer { indexLock.unlock() }
         return indexBuildInProgress
+    }
+
+    // MARK: Discovery stream
+
+    /// Lets the collection pipeline start copying/zipping a bundle the moment its
+    /// container is discovered, instead of waiting for the whole 50M-inode walk.
+    private static let discoveryLock = NSLock()
+    private static var discoveryHandler: ((String, String) -> Void)?
+    private static var scanCompletionHandler: (() -> Void)?
+
+    static func setDiscoveryHandler(_ handler: ((String, String) -> Void)?) {
+        discoveryLock.lock()
+        discoveryHandler = handler
+        discoveryLock.unlock()
+    }
+
+    static func setScanCompletionHandler(_ handler: (() -> Void)?) {
+        discoveryLock.lock()
+        scanCompletionHandler = handler
+        discoveryLock.unlock()
+    }
+
+    private static func notifyDiscovery(identifier: String, path: String) {
+        discoveryLock.lock()
+        let handler = discoveryHandler
+        discoveryLock.unlock()
+        handler?(identifier, path)
+    }
+
+    private static func notifyScanCompletion() {
+        discoveryLock.lock()
+        let handler = scanCompletionHandler
+        discoveryLock.unlock()
+        handler?()
     }
 
     /// Keeps discovering containers after the fast index is ready.
@@ -446,6 +482,9 @@ enum ContainerStore {
         containerIndexBuiltAt = Date()
         let snapshot = containerIndex
         indexLock.unlock()
+        for (identifier, path) in added {
+            notifyDiscovery(identifier: identifier, path: path)
+        }
         persistIndex(snapshot, named: "container-index.txt")
         log("browser: container index +\(added.count) → \(snapshot.count) entries")
     }
@@ -597,6 +636,7 @@ enum ContainerStore {
                       ContainerBundleCandidateResolver.isValidBundleIdentifier(identifier)
                 else { continue }
                 scan.index[identifier] = directory
+                notifyDiscovery(identifier: identifier, path: directory)
             }
         }
         return scan

