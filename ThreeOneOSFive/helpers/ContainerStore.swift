@@ -140,9 +140,12 @@ enum ContainerStore {
            isApplicationContainerPath(container) || isContainerPath(container) {
             let canonical = ContainerDiscoveryMerger.canonicalPath(container)
             log("patch: LS proxy resolved \(bundleID) -> \(canonical)")
+            DebugLogWriter.shared.write("patch: LS proxy resolved \(bundleID)")
             retainAccess(canonical)
             return canonical
         }
+        log("patch: LS proxy has no container for \(bundleID)")
+        DebugLogWriter.shared.write("patch: LS proxy has no container for \(bundleID)")
 
         if let path = MCMActivateContainerPath(2, bundleID, false, &lookupError),
            isApplicationContainerPath(path) {
@@ -192,14 +195,10 @@ enum ContainerStore {
     }
 
     static func resolveAppContainerPathByMetadataScan(bundleID: String) -> String? {
-        // Access to the container roots comes from either the kernel sandbox
-        // escape (17.x – 26.6.1) or a worse_query userland extension
-        // (26.6.2 / 27.x, where no kernel offsets exist).
-        //
-        // The index is consulted first and is itself proof of access: waiting on
-        // hasFilesystemAccess() used to make the whole cycle skip every bundle
-        // while the background probe was still running.
-        let index = containerIndexSnapshot()
+        // Index lookup never blocks: if a walk is in flight the caller gets the
+        // current snapshot (possibly the one preloaded from disk) and the bundle
+        // is retried on the next foreground instead of stalling the cycle.
+        let index = containerIndexSnapshot(waitForBuild: false)
         if let path = index[bundleID], isContainerPath(path) {
             retainAccess(path)
             return ContainerDiscoveryMerger.canonicalPath(path)
@@ -214,9 +213,10 @@ enum ContainerStore {
             // Say *why* it missed: not installed, or spelled differently.
             let nearest = nearestIdentifier(for: bundleID, in: index.keys)
             let sample = index.keys.sorted().prefix(20).joined(separator: ",")
-            log("patch: \(bundleID) missing from container index (\(index.count) entries, nearest=\(nearest ?? "none"))")
+            let building = containerIndexIsBuilding
+            log("patch: \(bundleID) missing from container index (\(index.count) entries, nearest=\(nearest ?? "none"), building=\(building))")
             DebugLogWriter.shared.write(
-                "patch: \(bundleID) missing from index (\(index.count) entries) nearest=\(nearest ?? "none") sample=[\(sample)]"
+                "patch: \(bundleID) missing from index (\(index.count) entries) nearest=\(nearest ?? "none") building=\(building) sample=[\(sample)]"
             )
             // A non-empty index is authoritative: rescanning all roots for every
             // missing bundle id is what burned the collection window on 27.x.
@@ -266,12 +266,17 @@ enum ContainerStore {
     private static let containerIndexTTL: TimeInterval = 300
     private static var indexBuildInProgress = false
 
-    /// bundle id -> container path, built once (TTL 5 min) instead of per lookup.
-    /// Never builds on the main thread: the first build walks the app roots and
-    /// grants every container, which is a few seconds of work. A background
-    /// caller waits for an in-flight build instead of accepting an empty index —
-    /// an empty answer made the collection cycle skip every bundle.
-    static func containerIndexSnapshot() -> [String: String] {
+    /// bundle id -> container path.
+    ///
+    /// * seeded from the previous run's `container-index.txt` so the first
+    ///   collection of a launch does not have to wait for a fresh walk;
+    /// * refreshed in the background (TTL 5 min);
+    /// * `waitForBuild: false` (used by path resolution) never blocks: if a walk
+    ///   is in flight the caller gets the current snapshot and can retry on the
+    ///   next foreground instead of stalling the whole cycle.
+    static func containerIndexSnapshot(waitForBuild: Bool = true) -> [String: String] {
+        preloadDiskIndexIfNeeded()
+
         indexLock.lock()
         if let builtAt = containerIndexBuiltAt,
            Date().timeIntervalSince(builtAt) < containerIndexTTL,
@@ -281,29 +286,24 @@ enum ContainerStore {
             return snapshot
         }
         if indexBuildInProgress {
+            let snapshot = containerIndex
             indexLock.unlock()
-            if Thread.isMainThread {
-                indexLock.lock()
-                let snapshot = containerIndex
-                indexLock.unlock()
-                return snapshot
-            }
+            if !waitForBuild || Thread.isMainThread { return snapshot }
             let deadline = Date().addingTimeInterval(90)
             while Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
                 indexLock.lock()
                 let still = indexBuildInProgress
-                let snapshot = containerIndex
-                let built = containerIndexBuiltAt != nil
+                let value = containerIndex
                 indexLock.unlock()
-                if !still { return built ? snapshot : [:] }
+                if !still { return value }
             }
-            return [:]
+            return snapshot
         }
         if Thread.isMainThread {
             let snapshot = containerIndex
             indexLock.unlock()
-            DispatchQueue.global(qos: .userInitiated).async { _ = containerIndexSnapshot() }
+            DispatchQueue.global(qos: .userInitiated).async { _ = containerIndexSnapshot(waitForBuild: false) }
             return snapshot
         }
         indexBuildInProgress = true
@@ -320,6 +320,50 @@ enum ContainerStore {
         indexBuildInProgress = false
         indexLock.unlock()
         return fresh
+    }
+
+    static var containerIndexIsBuilding: Bool {
+        indexLock.lock()
+        defer { indexLock.unlock() }
+        return indexBuildInProgress
+    }
+
+    private static var didPreloadDiskIndex = false
+
+    /// Seeds the in-memory index from the dump the previous run wrote to
+    /// `Documents/container-index.txt`. The entry stays marked stale so a fresh
+    /// walk replaces it in the background.
+    private static func preloadDiskIndexIfNeeded() {
+        indexLock.lock()
+        if didPreloadDiskIndex || !containerIndex.isEmpty {
+            indexLock.unlock()
+            return
+        }
+        didPreloadDiskIndex = true
+        indexLock.unlock()
+
+        guard let documents = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first,
+              let text = try? String(contentsOf: documents.appendingPathComponent("container-index.txt"),
+                                     encoding: .utf8) else { return }
+
+        var map: [String: String] = [:]
+        for line in text.split(separator: "\n") {
+            let parts = line.split(separator: "\t", maxSplits: 1)
+            guard parts.count == 2 else { continue }
+            map[String(parts[0])] = String(parts[1])
+        }
+        guard !map.isEmpty else { return }
+
+        indexLock.lock()
+        if containerIndex.isEmpty {
+            containerIndex = map
+            containerIndexBuiltAt = Date.distantPast
+        }
+        indexLock.unlock()
+        log("browser: container index preloaded \(map.count) entries from disk")
     }
 
     /// Reverse lookup on the cached index: container path -> bundle id, without
@@ -876,16 +920,16 @@ enum ContainerStore {
         // Scan plan instead of a blind full-range sweep. On 27.x the volume's
         // inode counter is in the tens of millions (our own container sits at
         // ~36M), so a 1M-at-a-time loop over everything never finishes inside the
-        // app's foreground window.
+        // app's foreground window — and scanning three roots that way took 45 s.
         //
         //  * low range  : system-app containers, created when the OS was set up
         //  * own neighbourhood : containers of apps installed around the same time
-        //    as this one (typically a few million inodes below our own container)
+        //    as this one (a few million inodes below our own container)
         let ownInode = selfContainerInode()
-        var ranges: [(from: Int64, to: Int64)] = [(1, 2_000_000)]
+        var ranges: [(from: Int64, to: Int64)] = [(1, 1_000_000)]
         if ownInode > 0 {
-            let low = max(1, ownInode - 20_000_000)
-            let high = ownInode + 2_000_000
+            let low = max(1, ownInode - 6_000_000)
+            let high = ownInode + 1_000_000
             ranges.append((low, high))
         }
         log("enumerate: \(path) own container inode=\(ownInode), ranges=\(ranges.map { "\($0.from)-\($0.to)" }.joined(separator: ","))")
