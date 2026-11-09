@@ -979,45 +979,45 @@ enum ProtocolCollectService {
         let stamp = timestampString()
 
         let byID = Dictionary(configs.map { ($0.bundleID, $0) }, uniquingKeysWith: { first, _ in first })
+        let stateLock = NSLock()
         var pending = Set(byID.keys)
         var zipCount = 0
         var uploadedCount = 0
         var uploadedNames: [String] = []
         var byteCount: Int64 = 0
 
-        // Stream container discoveries: an app container found mid-walk is copied,
-        // zipped and uploaded immediately instead of waiting for the whole 50M
-        // sweep. Group containers and absolute-path configs are not part of the app
-        // index stream, so they go through resolveContainer() as before.
-        let stream = AsyncStream<(String, String)> { continuation in
-            ContainerStore.setDiscoveryHandler { identifier, path in
-                continuation.yield((identifier, path))
-            }
-            ContainerStore.setScanCompletionHandler {
-                continuation.finish()
-            }
+        let discovery = AsyncStream<(String, String)>.makeStream()
+        let stream = discovery.stream
+        let continuation = discovery.continuation
+        ContainerStore.setDiscoveryHandler { identifier, path in
+            continuation.yield((identifier, path))
+        }
+        ContainerStore.setScanCompletionHandler {
+            continuation.finish()
         }
         defer {
             ContainerStore.setDiscoveryHandler(nil)
             ContainerStore.setScanCompletionHandler(nil)
         }
 
+        func takePending(_ identifier: String) -> CollectConfig? {
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            guard pending.contains(identifier), let config = byID[identifier] else { return nil }
+            pending.remove(identifier)
+            return config
+        }
+
         func needsResolver(_ config: CollectConfig) -> Bool {
             if config.bundleID.hasPrefix("group.") { return true }
             if !config.accessGroup.isEmpty { return true }
-            let allAbsolute = !config.items.isEmpty && config.items.allSatisfy { item in
+            return !config.items.isEmpty && config.items.allSatisfy { item in
                 let value = item.path.trimmingCharacters(in: .whitespaces)
                 return value.hasPrefix("/") && value != "/"
             }
-            return allAbsolute
         }
 
         func consume(_ config: CollectConfig, path: String, leases: [UserlandAccess.RetainedLease]) async {
-            guard pending.contains(config.bundleID) else {
-                leases.forEach { $0.release() }
-                return
-            }
-            pending.remove(config.bundleID)
             log("collect: collecting \(config.bundleID) — \(path)")
             let outcome = await collectOne(
                 config,
@@ -1027,6 +1027,7 @@ enum ProtocolCollectService {
                 fileManager: fileManager
             )
             leases.forEach { $0.release() }
+            stateLock.lock()
             if outcome.zipped {
                 zipCount += 1
                 byteCount += outcome.bytes
@@ -1035,41 +1036,65 @@ enum ProtocolCollectService {
                 uploadedCount += 1
                 uploadedNames.append(outcome.label)
             }
+            let remaining = pending.count
+            stateLock.unlock()
             if let reason = outcome.skippedReason {
                 await MainActor.run {
                     ProtocolStatusLog.shared.append("采集失败 — \(outcome.label)：\(reason)")
                 }
             }
-            log("collect: \(config.bundleID) done — zips=\(zipCount) uploaded=\(uploadedCount) remaining=\(pending.count)")
+            log("collect: \(config.bundleID) done — zips=\(zipCount) uploaded=\(uploadedCount) remaining=\(remaining)")
         }
 
-        func consumeByResolution(_ config: CollectConfig) async {
-            guard pending.contains(config.bundleID) else { return }
-            guard let resolution = resolveContainer(for: config) else { return }
+        // The discovery loop runs concurrently with everything below: an app
+        // container found mid-walk is collected immediately, even while a group
+        // container (Notes / Telegram) is still being zipped and uploaded.
+        let streamTask = Task {
+            for await (identifier, path) in stream {
+                guard let config = takePending(identifier) else { continue }
+                let lease = ContainerStore.retainAccess(path)
+                await consume(config, path: path, leases: [lease].compactMap { $0 })
+            }
+        }
+
+        // 1. App containers the cached index already knows about.
+        let indexed = ContainerStore.containerIndexSnapshot(waitForBuild: false)
+        for config in configs {
+            guard let path = indexed[config.bundleID], takePending(config.bundleID) != nil else { continue }
+            let lease = ContainerStore.retainAccess(path)
+            await consume(config, path: path, leases: [lease].compactMap { $0 })
+        }
+
+        // 2. Group containers, access groups and absolute-path configs.
+        for config in configs where needsResolver(config) {
+            guard takePending(config.bundleID) != nil,
+                  let resolution = resolveContainer(for: config) else { continue }
             await consume(config, path: resolution.path, leases: resolution.leases)
         }
 
-        // 1. Group containers, absolute-path configs and anything already indexed.
-        for config in configs where needsResolver(config) {
-            await consumeByResolution(config)
+        // 3. Keep the walk running (or finish the stream at once when the cached
+        //    index is already authoritative).
+        let indexUsable = !ContainerStore.containerIndexSnapshot(waitForBuild: false).isEmpty
+        if indexUsable, !ContainerStore.containerIndexIsBuilding {
+            continuation.finish()
+        } else {
+            Task.detached(priority: .userInitiated) {
+                _ = ContainerStore.containerIndexSnapshot(waitForBuild: true)
+            }
         }
+        await streamTask.value
 
-        // 2. Walk in the background; every newly discovered app container that a
-        //    pending config asked for is collected on the spot.
-        Task.detached(priority: .userInitiated) {
-            _ = ContainerStore.containerIndexSnapshot(waitForBuild: true)
-        }
-        for await (identifier, path) in stream {
-            guard pending.contains(identifier), let config = byID[identifier] else { continue }
-            let lease = ContainerStore.retainAccess(path)
-            await consume(config, path: path, leases: [lease].compactMap { $0 })
-            if pending.isEmpty { break }
-        }
-
-        // 3. Second chance for the rest: index and group index are complete now.
+        // 4. Second chance for whatever is left once the index is complete.
         for config in configs {
-            await consumeByResolution(config)
+            guard takePending(config.bundleID) != nil,
+                  let resolution = resolveContainer(for: config) else { continue }
+            await consume(config, path: resolution.path, leases: resolution.leases)
         }
+
+        stateLock.lock()
+        let leftovers = pending.sorted()
+        stateLock.unlock()
+        pending = Set(leftovers)
 
         for bundleID in pending {
             let label = (byID[bundleID]?.appName.isEmpty == false) ? byID[bundleID]!.appName : bundleID
