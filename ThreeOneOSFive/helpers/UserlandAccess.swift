@@ -30,6 +30,11 @@ enum UserlandAccess {
         worse_query_last_group() ?? "none"
     }
 
+    /// Path covered by the last successful grant (the container that answered).
+    static var lastPath: String {
+        worse_query_last_path() ?? "none"
+    }
+
     /// Groups this build is entitled to (empty when the signature lacks them).
     static var entitledGroups: [String] {
         worse_query_entitled_groups()
@@ -80,16 +85,29 @@ enum UserlandAccess {
 
         let started = Date()
         var succeeded = false
-        for candidate in probeTargets() {
+        var grantedPath = "none"
+        // Prefer a real container: on 26.6.2 / 27.x a directory *root* answers
+        // with no token (-6) while a container directory is granted, so probing
+        // only roots reports a false negative.
+        var candidates = probeTargets()
+        if let indexed = ContainerStore.containerIndexSnapshot().values.first {
+            candidates.insert(indexed, at: 0)
+        }
+        for candidate in candidates {
             let handle = grant(candidate)
             if handle >= 0 {
                 revoke(handle)
                 succeeded = true
+                grantedPath = candidate
                 break
             }
+            if handle == -1 || handle == -2 { break }
         }
         let elapsed = Date().timeIntervalSince(started)
-        log("userland: probe result=\(succeeded) in \(String(format: "%.2f", elapsed))s group=\(lastGroup) detail=\(lastError)")
+        log("userland: probe result=\(succeeded) in \(String(format: "%.2f", elapsed))s path=\(grantedPath) group=\(lastGroup) detail=\(lastError)")
+        DebugLogWriter.shared.write(
+            "userland: probe=\(succeeded) path=\(grantedPath) group=\(lastGroup) error=\(lastError)"
+        )
 
         lock.lock()
         if succeeded { cachedProbeResult = true }
@@ -99,18 +117,18 @@ enum UserlandAccess {
     }
 
     private static func probeTargets() -> [String] {
-        // iOS 26 keeps app data under /var/mobile, iOS 27 moved the System root
-        // to /var/containers (see the upstream README). Probe whatever exists.
-        let candidates = [
-            "/var/mobile/Containers/Data/Application",
-            "/var/containers/Data/Application",
-            "/var/mobile/Containers/Shared/AppGroup",
-            "/var/containers/Shared/SystemGroup",
-            "/var/containers/Data/System",
-            "/var/mobile/Media/DCIM"
-        ]
-        let existing = candidates.filter { FileManager.default.fileExists(atPath: $0) }
-        return existing.isEmpty ? [candidates[0]] : existing
+        // Never filter with fileExists(): inside the sandbox a perfectly valid
+        // root reports "missing" because the path check itself is denied.
+        let mobile = "/var/mobile/Containers/Data/Application"
+        let containers = "/var/containers/Data/Application"
+        let appGroup = "/var/mobile/Containers/Shared/AppGroup"
+        let systemGroup = "/var/containers/Shared/SystemGroup"
+        let systemData = "/var/containers/Data/System"
+        let dcim = "/var/mobile/Media/DCIM"
+        if ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 {
+            return [containers, systemGroup, systemData, mobile, appGroup, dcim]
+        }
+        return [mobile, appGroup, containers, systemGroup, systemData, dcim]
     }
 
     /// Filesystem access is either the kernel sandbox escape (<= 26.6.1) or the

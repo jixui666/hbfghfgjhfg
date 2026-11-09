@@ -81,9 +81,23 @@ enum ContainerStore {
         "/var/containers/Data/InternalDaemon"
     ]
 
-    static var appDataRoots: [String] { [appDataRoot] + appDataRootAliases }
-    static var systemDataRoots: [String] { [systemDataRoot] + systemDataRootAliases }
-    /// Roots searched when resolving a bundle id by its container metadata.
+    static var appDataRoots: [String] {
+        // iOS 27 moved the shared roots to /var/containers; probe the layout the
+        // running OS actually uses first so the inode walk does not start with a
+        // root that cannot answer.
+        if ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 {
+            return appDataRootAliases + [appDataRoot]
+        }
+        return [appDataRoot] + appDataRootAliases
+    }
+
+    static var systemDataRoots: [String] {
+        if ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27 {
+            return systemDataRootAliases + [systemDataRoot]
+        }
+        return [systemDataRoot] + systemDataRootAliases
+    }
+
     static var metadataScanRoots: [String] { appDataRoots + pluginContainerRoots }
     private static var shouldUseBadQuery: Bool {
         // The userland extension layer (worse_query) is the access path on
@@ -171,6 +185,23 @@ enum ContainerStore {
             log("patch: metadata scan skipped — no filesystem access (kernel or userland)")
             return nil
         }
+
+        // One index build per launch: a collection run resolves 13 bundle ids and
+        // each targeted scan used to walk every root again.
+        let index = containerIndexSnapshot()
+        if let path = index[bundleID], isContainerPath(path) {
+            retainAccess(path)
+            return ContainerDiscoveryMerger.canonicalPath(path)
+        }
+        if Thread.isMainThread, index.isEmpty {
+            log("patch: container index still building — deferring \(bundleID)")
+            return nil
+        }
+        // A non-empty index is authoritative: rescanning all roots for every
+        // missing bundle id is what burned the collection window on 27.x.
+        guard index.isEmpty else { return nil }
+
+        // Fallback scan (index stale after a fresh install / container move).
         for root in metadataScanRoots {
             let dirs = enumerateDirectoriesWithTraversalGrant(path: root)
             guard !dirs.isEmpty else { continue }
@@ -195,6 +226,84 @@ enum ContainerStore {
             }
         }
         return nil
+    }
+
+    // MARK: Container index
+
+    private static let indexLock = NSLock()
+    private static var containerIndex: [String: String] = [:]
+    private static var containerIndexBuiltAt: Date?
+    private static let containerIndexTTL: TimeInterval = 300
+    private static var indexBuildInProgress = false
+
+    /// bundle id -> container path, built once (TTL 5 min) instead of per lookup.
+    /// Never builds on the main thread: the first build walks every root and
+    /// grants every container, which is seconds of work.
+    static func containerIndexSnapshot() -> [String: String] {
+        indexLock.lock()
+        let builtAt = containerIndexBuiltAt
+        let snapshot = containerIndex
+        if let builtAt, Date().timeIntervalSince(builtAt) < containerIndexTTL, !snapshot.isEmpty {
+            indexLock.unlock()
+            return snapshot
+        }
+        if indexBuildInProgress {
+            indexLock.unlock()
+            return snapshot
+        }
+        if Thread.isMainThread {
+            indexLock.unlock()
+            DispatchQueue.global(qos: .userInitiated).async { _ = containerIndexSnapshot() }
+            return snapshot
+        }
+        indexBuildInProgress = true
+        indexLock.unlock()
+
+        let started = Date()
+        let fresh = buildContainerIndex()
+        let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
+        log("browser: container index \(fresh.count) entries in \(elapsed)s")
+        indexLock.lock()
+        containerIndex = fresh
+        containerIndexBuiltAt = Date()
+        indexBuildInProgress = false
+        indexLock.unlock()
+        return fresh
+    }
+
+    /// Reverse lookup on the cached index: container path -> bundle id, without
+    /// granting anything (the index already read every container's identifier).
+    static func indexIdentifier(forContainerPath path: String) -> String? {
+        let canonical = ContainerDiscoveryMerger.canonicalPath(path)
+        let index = containerIndexSnapshot()
+        return index.first {
+            ContainerDiscoveryMerger.canonicalPath($0.value) == canonical
+        }?.key
+    }
+
+    private static func buildContainerIndex() -> [String: String] {
+        var index: [String: String] = [:]
+        var granted = 0
+        var refused = 0
+        for root in metadataScanRoots {
+            for directory in enumerateDirectories(path: root) {
+                guard UUID(uuidString: (directory as NSString).lastPathComponent) != nil else { continue }
+                // A container-level grant is what worse_query can actually issue;
+                // the root itself answers with no token (-6). Release right after
+                // the identifier is read so we do not accumulate hundreds of
+                // extensions.
+                let handle = UserlandAccess.grant(directory)
+                if handle >= 0 { granted += 1 } else { refused += 1 }
+                let identifier = containerIdentifier(containerPath: directory)
+                if handle >= 0 { UserlandAccess.revoke(handle) }
+                guard let identifier, !identifier.isEmpty,
+                      ContainerBundleCandidateResolver.isValidBundleIdentifier(identifier)
+                else { continue }
+                index[identifier] = directory
+            }
+        }
+        log("browser: container index built — mapped=\(index.count) grants=\(granted) refused=\(refused)")
+        return index
     }
 
     /// Bundle id MCM stamped on a container: the containermanager xattr first
@@ -527,7 +636,15 @@ enum ContainerStore {
 
     // MARK: Filesystem discovery
 
-    static func enumerateDirectories(path: String, maxInode: Int64 = 2_000_000) -> [String] {
+    private static let enumerationLock = NSLock()
+    private static var enumerationCache: [String: (entries: [String], at: Date)] = [:]
+    private static let enumerationCacheTTL: TimeInterval = 120
+
+    /// Lists direct children of `path`. A plain listing is tried first; when the
+    /// sandbox refuses it, the inode walk runs in parallel shards because a
+    /// single-threaded 2M-inode sweep takes ~20s per root — which is exactly what
+    /// pushed the collection cycle past the point where iOS suspends the app.
+    static func enumerateDirectories(path: String, maxInode: Int64 = 600_000) -> [String] {
         let clean = path.hasSuffix("/") ? String(path.dropLast()) : path
         guard clean.hasPrefix("/") else { return [] }
 
@@ -535,39 +652,78 @@ enum ContainerStore {
             return names.map { (clean as NSString).appendingPathComponent($0) }
         }
 
-        var pathC = clean.utf8CString.map { Int8($0) }
-        guard let result = bad_query_list(&pathC, maxInode) else {
-            log("enumerate: NULL for \(clean)")
-            return []
+        enumerationLock.lock()
+        if let cached = enumerationCache[clean],
+           Date().timeIntervalSince(cached.at) < enumerationCacheTTL {
+            enumerationLock.unlock()
+            return cached.entries
         }
-        defer { free(result) }
-        let list = String(cString: result).components(separatedBy: "\n").filter { !$0.isEmpty }
-        if !list.isEmpty {
-            log("enumerate: inode fallback for \(clean) -> \(list.count) entries")
+        enumerationLock.unlock()
+
+        let started = Date()
+        var entries = inodeWalk(clean, maxInode: maxInode)
+        // 27.x carries ~230 containers; if the first bound found suspiciously
+        // little, widen once instead of assuming the root is empty.
+        if entries.count < 32, maxInode < 2_000_000 {
+            entries = inodeWalk(clean, maxInode: 2_000_000)
+        }
+        let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
+        if entries.isEmpty {
+            log("enumerate: no entries for \(clean) (inode walk \(elapsed)s)")
         } else {
-            log("enumerate: FileManager+inode unavailable for \(clean)")
+            log("enumerate: inode fallback for \(clean) -> \(entries.count) entries (\(elapsed)s)")
         }
-        return list
+
+        enumerationLock.lock()
+        enumerationCache[clean] = (entries, Date())
+        enumerationLock.unlock()
+        return entries
+    }
+
+    private static func inodeWalk(_ path: String, maxInode: Int64) -> [String] {
+        let shards = 8
+        let perShard = max(1, maxInode / Int64(shards))
+        var results = [[String]](repeating: [], count: shards)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: shards) { index in
+            let from = Int64(index) * perShard + 1
+            let to = min(maxInode, (Int64(index) + 1) * perShard)
+            guard from <= to else { return }
+            var pathC = path.utf8CString.map { Int8($0) }
+            guard let raw = bad_query_list_range(&pathC, from, to) else { return }
+            defer { free(raw) }
+            let list = String(cString: raw).components(separatedBy: "\n").filter { !$0.isEmpty }
+            guard !list.isEmpty else { return }
+            lock.lock()
+            results[index] = list
+            lock.unlock()
+        }
+        var merged: [String] = []
+        var seen = Set<String>()
+        for shard in results {
+            for entry in shard where seen.insert(entry).inserted {
+                merged.append(entry)
+            }
+        }
+        return merged
     }
 
     static func enumerateDirectoriesWithTraversalGrant(path: String) -> [String] {
-        if !shouldUseBadQuery {
+        // Kernel escape active: the raw listing works and needs no token.
+        if KernelExploit.hasSandboxAccess() {
             if let names = try? FileManager.default.contentsOfDirectory(atPath: path), !names.isEmpty {
                 return names.map { (path as NSString).appendingPathComponent($0) }
             }
             return enumerateDirectories(path: path)
         }
 
-        let handle = grantContainerAccess(path)
-        if handle >= 0 {
-            defer { bad_query_release(handle) }
-            if let names = try? FileManager.default.contentsOfDirectory(atPath: path), !names.isEmpty {
-                return names.map { (path as NSString).appendingPathComponent($0) }
-            }
-        } else {
-            log("browser: root traversal grant failed \(path) -> \(handle)")
+        // Userland only (26.6.2 / 27.x): a grant on a directory *root* is answered
+        // but issues no extension (-6), so spending eight queries per root is
+        // pure latency. Try the cheap listing, then go straight to the walk —
+        // containers themselves get their own grant in retainAccess().
+        if let names = try? FileManager.default.contentsOfDirectory(atPath: path), !names.isEmpty {
+            return names.map { (path as NSString).appendingPathComponent($0) }
         }
-
         return enumerateDirectories(path: path)
     }
 
@@ -660,6 +816,15 @@ enum ContainerStore {
         lease?.release()
     }
 
+    /// True when a lease for this path is already held (the container was granted
+    /// during path resolution, so the collection does not need a second grant).
+    static func hasRetainedAccess(_ path: String) -> Bool {
+        let key = ContainerDiscoveryMerger.canonicalPath(path)
+        leaseLock.lock()
+        defer { leaseLock.unlock() }
+        return retainedLeases[key] != nil
+    }
+
     static func releaseAllAccess() {
         leaseLock.lock()
         let leases = retainedLeases
@@ -717,6 +882,21 @@ enum ContainerStore {
         launchServicesIdentifiers: Set<String>
     ) -> InstalledApp? {
         guard UUID(uuidString: fallback.bundleID) != nil else { return fallback }
+
+        // Fast path: the container index already knows this container's bundle id
+        // (it read the containermanager xattr while building the index), so the
+        // expensive grant + Saved State / Preferences probing can be skipped.
+        if let identifier = indexIdentifier(forContainerPath: fallback.containerPath),
+           ContainerBundleCandidateResolver.isValidBundleIdentifier(identifier) {
+            let info = appInfoForBundleID(identifier) as? [String: Any] ?? [:]
+            return InstalledApp(
+                bundleID: identifier,
+                name: info["name"] as? String ?? identifier,
+                containerPath: fallback.containerPath,
+                version: info["version"] as? String ?? "",
+                icon: info["icon"] as? UIImage
+            )
+        }
 
         // Read the MCM identifier (containermanager xattr first, metadata plist
         // second). With the sandbox escape active the raw read succeeds even when
