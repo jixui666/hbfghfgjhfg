@@ -131,7 +131,7 @@ enum ContainerStore {
         }
         var lookupError: NSString?
 
-        // 0) LaunchServices proxy: a single-bundle query still returns
+        // 0. LaunchServices proxy: a single-bundle query still returns
         //    dataContainerURL on 27.x (allApplications is restricted, per-identity
         //    lookups are not). This is the cheapest route and needs no inode walk.
         if let info = appInfoForBundleID(bundleID) as? [String: Any],
