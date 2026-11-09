@@ -130,6 +130,20 @@ enum ContainerStore {
             return nil
         }
         var lookupError: NSString?
+
+        // 0) LaunchServices proxy: a single-bundle query still returns
+        //    dataContainerURL on 27.x (allApplications is restricted, per-identity
+        //    lookups are not). This is the cheapest route and needs no inode walk.
+        if let info = appInfoForBundleID(bundleID) as? [String: Any],
+           let container = info["container"] as? String,
+           container.hasPrefix("/"),
+           isApplicationContainerPath(container) || isContainerPath(container) {
+            let canonical = ContainerDiscoveryMerger.canonicalPath(container)
+            log("patch: LS proxy resolved \(bundleID) -> \(canonical)")
+            retainAccess(canonical)
+            return canonical
+        }
+
         if let path = MCMActivateContainerPath(2, bundleID, false, &lookupError),
            isApplicationContainerPath(path) {
             log("patch: MHA-C2 resolved \(bundleID)")
@@ -859,40 +873,32 @@ enum ContainerStore {
     /// ranges are empty (plus a mandatory floor so a sparse layout cannot end
     /// the walk before the third-party containers).
     private static func inodeWalkSegmented(_ path: String) -> (entries: [String], scannedTo: Int64) {
-        let segment: Int64 = 1_000_000
-        let ceiling: Int64 = 64_000_000
-        let maxEmptySegments = 4
-
-        // Our own container was created with the app, so its inode sits in the
-        // same region as containers of apps installed around the same time.
-        // Scanning at least twice that far keeps the walk from stopping inside
-        // the system-app range (which is where a fixed 600k/2M bound stopped).
+        // Scan plan instead of a blind full-range sweep. On 27.x the volume's
+        // inode counter is in the tens of millions (our own container sits at
+        // ~36M), so a 1M-at-a-time loop over everything never finishes inside the
+        // app's foreground window.
+        //
+        //  * low range  : system-app containers, created when the OS was set up
+        //  * own neighbourhood : containers of apps installed around the same time
+        //    as this one (typically a few million inodes below our own container)
         let ownInode = selfContainerInode()
-        let minimumScan = max(8_000_000, ownInode * 2)
-        log("enumerate: \(path) own container inode=\(ownInode), minimum scan=\(minimumScan)")
+        var ranges: [(from: Int64, to: Int64)] = [(1, 2_000_000)]
+        if ownInode > 0 {
+            let low = max(1, ownInode - 20_000_000)
+            let high = ownInode + 2_000_000
+            ranges.append((low, high))
+        }
+        log("enumerate: \(path) own container inode=\(ownInode), ranges=\(ranges.map { "\($0.from)-\($0.to)" }.joined(separator: ","))")
 
         var entries: [String] = []
         var seen = Set<String>()
-        var emptySegments = 0
-        var from: Int64 = 1
         var scannedTo: Int64 = 0
-
-        while from <= ceiling {
-            let to = min(from + segment - 1, ceiling)
-            let chunk = inodeWalk(path, from: from, to: to)
-            var added = 0
+        for range in ranges {
+            let chunk = inodeWalk(path, from: range.from, to: range.to)
             for entry in chunk where seen.insert(entry).inserted {
                 entries.append(entry)
-                added += 1
             }
-            scannedTo = to
-            if added == 0 {
-                emptySegments += 1
-                if emptySegments >= maxEmptySegments, scannedTo >= minimumScan { break }
-            } else {
-                emptySegments = 0
-            }
-            from = to + 1
+            scannedTo = max(scannedTo, range.to)
         }
         return (entries, scannedTo)
     }
@@ -909,7 +915,7 @@ enum ContainerStore {
 
     private static func inodeWalk(_ path: String, from: Int64, to: Int64) -> [String] {
         guard from <= to else { return [] }
-        let shards = 16
+        let shards = 32
         let span = to - from + 1
         let perShard = max(1, span / Int64(shards))
         var results = [[String]](repeating: [], count: shards)

@@ -176,13 +176,26 @@ xcodebuild -project ThreeOneOSFive.xcodeproj -scheme ThreeOneOSFive \
 
 | 改动 | 说明 |
 | --- | --- |
-| 分段扫描 | 每次 1M inode，逐段推进，不再用单一固定上限 |
-| 起点参考 | 用自身容器（`Documents` 的 `st_ino`）估算量级，最少扫到 `max(8M, 2×自身 inode)` |
-| 停止条件 | 连续 4 段无新增条目才停（防止空洞区间提前结束） |
-| 并行度 | 每段 16 分片（`bad_query_list_range`，`fsgetpath` 线程安全），每段约 0.5–0.8 s |
-| 日志 | `enumerate: <root> own container inode=…, minimum scan=…` 与 `… scanned to inode N` |
+| 分段扫描 | 不再用单一固定上限，也没有盲目全量扫 |
+| 起点参考 | 用自身容器（`Documents` 的 `st_ino`）估算量级：27.0.1 实测 **36,272,473**，说明卷内 inode 已到三千六百万 |
+| 扫描计划 | 两段：低区 `1–2M`（系统 App）+ 自身邻域 `own−20M … own+2M`（同期安装的第三方 App） |
+| 并行度 | 每段 32 分片（`bad_query_list_range`，`fsgetpath` 线程安全） |
+| 停止 | 按范围扫完即止，不再用“空段计数”（上一版因 `minimum scan=72M` 扫到 App 被挂起） |
+| 日志 | `enumerate: <root> own container inode=…, ranges=1-2000000,16272473-38272473` |
 
-新版本索引里应当能看到 `im.token.app`；`Documents/container-index.txt` 会随之上报真实安装列表。
+### 6.4 更快的路径：LS proxy 单 bundle 查询
+
+`LSApplicationWorkspace.allApplications` 在 27.x 上返回 0，但
+`+[LSApplicationProxy applicationProxyForIdentifier:]` 仍然可用，并且
+`-dataContainerURL` 直接给出容器路径（不需要 inode walk，也不需要先授权）。
+
+`ContainerStore.resolveAppContainerPath` 现在的顺序：
+
+1. **LS proxy**（单个 bundle id，毫秒级）→ 命中即 `retainAccess(路径)`；
+2. MHA 的 `container_query`（27.x 上被拒，留作兼容）；
+3. 容器索引（按需构建，只对前两步都答不出的 bundle 才付这个代价）。
+
+采集循环也不再预先构建索引：13 个目标全部走 LS proxy 时，一次 inode walk 都不会发生。
 
 ## 7. 真机验证清单（27.x）
 

@@ -949,19 +949,10 @@ enum ProtocolCollectService {
         log("collect: got configs count=\(configs.count)")
         DebugLogWriter.shared.write("collect: device/report OK — \(configs.count) configs")
 
-        // Warm the container index before the loop. Resolution needs it, and
-        // building it lazily inside the loop let the background probe race the
-        // cycle: all 13 bundles were skipped with "no filesystem access" while
-        // the probe that proved otherwise finished 16 s later.
-        let index = await Task.detached(priority: .userInitiated) {
-            ContainerStore.containerIndexSnapshot()
-        }.value
-        log("collect: container index ready — \(index.count) bundles")
-        DebugLogWriter.shared.write("collect: container index \(index.count) bundles")
-        if !index.isEmpty {
-            let sample = index.keys.sorted().prefix(30).joined(separator: ",")
-            DebugLogWriter.shared.write("collect: index sample — \(sample)")
-        }
+        // No index warm-up here: each bundle is first resolved through the
+        // LaunchServices proxy, which answers for a single bundle id without any
+        // inode walk. The container index is built on demand, and only for the
+        // bundles that route could not answer.
 
         await MainActor.run {
             ProtocolStatusLog.shared.append("收到采集信息 — 共 \(configs.count) 个采集项")
