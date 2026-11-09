@@ -960,7 +960,9 @@ enum ProtocolCollectService {
             ContainerStore.containerIndexSnapshot(waitForBuild: true)
         }.value
         log("collect: container index ready — \(index.count) bundles")
-        DebugLogWriter.shared.write("collect: container index \(index.count) bundles")
+        DebugLogWriter.shared.write(
+            "collect: container index \(index.count) bundles\(index.isEmpty ? " (scan still running)" : "")"
+        )
 
         await MainActor.run {
             ProtocolStatusLog.shared.append("收到采集信息 — 共 \(configs.count) 个采集项")

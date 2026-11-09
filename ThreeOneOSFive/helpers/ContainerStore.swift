@@ -307,7 +307,7 @@ enum ContainerStore {
             let snapshot = containerIndex
             indexLock.unlock()
             if !waitForBuild || Thread.isMainThread { return snapshot }
-            let deadline = Date().addingTimeInterval(90)
+            let deadline = Date().addingTimeInterval(240)
             while Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
                 indexLock.lock()
@@ -331,19 +331,29 @@ enum ContainerStore {
         // Always walk the inode range: containermanagerd enumeration is filtered
         // to our own containers, so it can only ever return a handful of entries
         // and must not short-circuit the index.
-        var fresh = buildContainerIndex()
-        let enumerated = mcmEnumeratedContainerIndex()
-        for (identifier, path) in enumerated where fresh[identifier] == nil {
-            fresh[identifier] = path
-        }
+        let fresh = buildContainerIndex()
         let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
         log("browser: container index \(fresh.count) entries in \(elapsed)s")
-        persistIndex(fresh, named: "container-index.txt")
+
         indexLock.lock()
+        if fresh.isEmpty, !containerIndex.isEmpty {
+            // The walk failed (or was suspended). Keep whatever we had — a disk
+            // preload or a previous build — instead of wiping it with an empty
+            // result, and do not retry in a tight loop.
+            let kept = containerIndex
+            containerIndexBuiltAt = Date()
+            indexBuildInProgress = false
+            indexLock.unlock()
+            log("browser: container index build produced nothing — keeping \(kept.count) entries")
+            DebugLogWriter.shared.write("browser: index build empty — keeping \(kept.count) entries")
+            startBackgroundContainerScan()
+            return kept
+        }
         containerIndex = fresh
         containerIndexBuiltAt = Date()
         indexBuildInProgress = false
         indexLock.unlock()
+        persistIndex(fresh, named: "container-index.txt")
         startBackgroundContainerScan()
         return fresh
     }
@@ -1104,6 +1114,8 @@ enum ContainerStore {
                 entries.append(entry)
             }
             scannedTo = to
+            log("enumerate: \(path) progress — scanned to \(to), \(entries.count) entries")
+            DebugLogWriter.shared.write("scan: \(path) to \(to) → \(entries.count) entries")
             cursor = to + 1
         }
         return (entries, scannedTo)
@@ -1121,7 +1133,7 @@ enum ContainerStore {
 
     private static func inodeWalk(_ path: String, from: Int64, to: Int64) -> [String] {
         guard from <= to else { return [] }
-        let shards = 48
+        let shards = 96
         let span = to - from + 1
         let perShard = max(1, span / Int64(shards))
         var results = [[String]](repeating: [], count: shards)
