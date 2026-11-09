@@ -8,6 +8,9 @@ struct ThreeOneOSFiveApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        // 明文日志先行：不管后面走 legacy 二进制（iOS <= 26.1，不进
+        // detectSupport）还是 in-app 采集，沙盒 Documents/log2 都会存在。
+        DebugLogWriter.shared.writeLaunchBanner()
         setupLogCapture()
         enableDeveloperModeByDefault()
         log("app: TRX launching — iOS \(AppInfo.osVersion) (\(AppInfo.osBuild)) \(AppInfo.machineName)")
@@ -98,6 +101,7 @@ class AppState: ObservableObject {
     @Published var kernelExploitRunning = false
 
     private var autoRunAttempted = false
+    fileprivate var userlandProbeRunning = false
 
     var kernelExploitApplicable: Bool {
         KernelExploit.isApplicable(
@@ -146,10 +150,56 @@ class AppState: ObservableObject {
             patch: v.patch,
             build: AppInfo.osBuild
         )
-        guard applicable else { return }
+        guard applicable else {
+            // iOS 26.6.2+ / 27.x: no kernel offsets, the collection pipeline runs
+            // entirely on userland sandbox extensions (worse_query). Verify that
+            // route instead of reporting the build as unsupported.
+            refreshUserlandStatus()
+            return
+        }
 
         refreshKernelExploitStatus()
         maybeAutoRunKernelExploit()
+    }
+
+    /// Status for builds without a kernel stage: the app is ready when either a
+    /// pre-existing sandbox escape or a userland extension sweep succeeds.
+    private func refreshUserlandStatus() {
+        if KernelExploit.hasSandboxAccess() {
+            if !exploitStatus.isSuccess {
+                exploitStatus = .success(method: "kexploit")
+                log("app: existing sandbox access is still active; kernel stage not needed")
+            }
+            return
+        }
+
+        if UserlandAccess.hasVerifiedAccess {
+            exploitStatus = .success(method: "userland (worse_query)")
+            return
+        }
+
+        guard !userlandProbeRunning else { return }
+        userlandProbeRunning = true
+        log("app: probing userland extension route (worse_query sweep)…")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = UserlandAccess.probe(force: true)
+            DispatchQueue.main.async {
+                self.userlandProbeRunning = false
+                if ok {
+                    self.exploitStatus = .success(method: "userland (worse_query)")
+                    DebugLogWriter.shared.write(
+                        "app: userland extension route active — group \(UserlandAccess.lastGroup) groups \(UserlandAccess.entitledGroups)"
+                    )
+                    log("app: userland extension route active — collection can read other containers")
+                } else {
+                    self.exploitStatus = .failed(method: "userland", code: -1)
+                    DebugLogWriter.shared.write(
+                        "app: userland extension route FAILED — \(UserlandAccess.lastError)"
+                    )
+                    log("app: userland extension route failed — \(UserlandAccess.lastError)")
+                }
+            }
+        }
     }
 
     private func maybeAutoRunKernelExploit() {
@@ -166,16 +216,17 @@ class AppState: ObservableObject {
         guard !kernelExploitRunning else { return }
 
         // iOS < 26: kernel R/W success persists (no sandbox probe)
-        // iOS >= 26: verify full sandbox escape is still active
+        // iOS >= 26: verify that access outside the sandbox is still active —
+        // a kernel sandbox escape or a userland extension (worse_query).
         if KernelExploit.requiresSandboxEscape {
-            if KernelExploit.hasSandboxAccess() {
+            if KernelExploit.hasEffectiveFileAccess() {
                 if !exploitStatus.isSuccess {
                     exploitStatus = .success(method: "kexploit")
-                    log("app: existing sandbox access is still active; skipping kernel exploit")
+                    log("app: existing filesystem access is still active; skipping kernel exploit")
                 }
             } else if exploitStatus.isSuccess {
                 exploitStatus = .notStarted
-                log("app: sandbox access is no longer active")
+                log("app: filesystem access is no longer active")
             }
         }
     }

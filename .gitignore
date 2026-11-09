@@ -80,3 +80,9 @@ _logs_plain.txt
 _decrypt_logs.py
 _logs2_*.txt
 _logs_*.txt
+
+# 本地采集样本与第三方参考源码（不入库）
+/1/
+/worse_query-main/
+/decrypt_3105.php
+

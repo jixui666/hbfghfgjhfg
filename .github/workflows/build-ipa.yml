@@ -5,9 +5,14 @@ on:
   push:
     branches: [ main ]
 
+concurrency:
+  group: build-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-15
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,41 +21,74 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+          xcode-select -p
 
-      - name: List schemes (debug)
-        run: xcodebuild -project ThreeOneOSFive.xcodeproj -list
+      - name: Lint plists
+        run: |
+          plutil -lint ThreeOneOSFive/Info.plist
+          plutil -lint ThreeOneOSFive/ThreeOneOSFive.entitlements
+          plutil -lint ThreeOneOSFive.xcodeproj/xcshareddata/xcschemes/3105.xcscheme
+
+      - name: List project
+        run: |
+          xcodebuild -project ThreeOneOSFive.xcodeproj -list
 
       - name: Build .app (unsigned)
         run: |
-          xcodebuild -project ThreeOneOSFive.xcodeproj \
+          set -o pipefail
+          xcodebuild \
+            -project ThreeOneOSFive.xcodeproj \
             -scheme 3105 \
             -configuration Release \
             -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
             -derivedDataPath build \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build
+            build 2>&1 | tee build.log
 
-      - name: Package IPA (unsigned)
+      - name: Verify build output
         run: |
           APP="build/Build/Products/Release-iphoneos/TRX.app"
           if [ ! -d "$APP" ]; then
             echo "ERROR: $APP not found" >&2
-            echo "--- build products ---" >&2
-            ls -R build/Build/Products/Release-iphoneos || true
+            find build/Build/Products -maxdepth 3 -name '*.app' -print >&2 || true
+            tail -n 200 build.log >&2 || true
             exit 1
           fi
-          rm -rf Payload
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
+          ls -lh "$APP"
+
+      - name: Package IPA (unsigned)
+        run: |
+          APP="build/Build/Products/Release-iphoneos/TRX.app"
+          rm -rf Payload TRX-unsigned.ipa
           mkdir -p Payload
           cp -R "$APP" Payload/
           zip -qry TRX-unsigned.ipa Payload
           rm -rf Payload
           ls -lh TRX-unsigned.ipa
+          unzip -l TRX-unsigned.ipa | head -n 20
+
+      - name: Collect signing material
+        run: |
+          cp ThreeOneOSFive/ThreeOneOSFive.entitlements TRX.entitlements
+          cat TRX.entitlements
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: TRX-unsigned-ipa
-          path: TRX-unsigned.ipa
+          path: |
+            TRX-unsigned.ipa
+            TRX.entitlements
           if-no-files-found: error
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore

@@ -1,4 +1,4 @@
-// !UTF8*0
+﻿// !UTF8*0
 {
 	archiveVersion = 1;
 	classes = {
@@ -15,6 +15,8 @@
 		3105A206 /* SBX.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A026; };
 		3105A207 /* MG.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A027; };
 		3105A209 /* bad_query.c in Sources */ = {isa = PBXBuildFile; fileRef = 3105A029; };
+		3105W200 /* worse_query.m in Sources */ = {isa = PBXBuildFile; fileRef = 3105W100; };
+		3105W201 /* UserlandAccess.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105W101; };
 		3105A210 /* mcm_bridge.m in Sources */ = {isa = PBXBuildFile; fileRef = 3105A030; };
 		3105A220 /* kexploit_opa334.m in Sources */ = {isa = PBXBuildFile; fileRef = 3105A080; };
 		3105A221 /* offsets.m in Sources */ = {isa = PBXBuildFile; fileRef = 3105A081; };
@@ -94,6 +96,9 @@
 		3105A026 /* SBX.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SBX.swift; sourceTree = "<group>"; };
 		3105A027 /* MG.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MG.swift; sourceTree = "<group>"; };
 		3105A029 /* bad_query.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = bad_query.c; sourceTree = "<group>"; };
+		3105W100 /* worse_query.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = worse_query.m; sourceTree = "<group>"; };
+		3105W102 /* worse_query.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = worse_query.h; sourceTree = "<group>"; };
+		3105W101 /* UserlandAccess.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UserlandAccess.swift; sourceTree = "<group>"; };
 		3105A030 /* mcm_bridge.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = mcm_bridge.m; sourceTree = "<group>"; };
 		3105A031 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		3105A040 /* bad_query.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bad_query.h; sourceTree = "<group>"; };
@@ -230,6 +235,8 @@
 			children = (
 				3105A029 /* bad_query.c */,
 				3105A040 /* bad_query.h */,
+				3105W100 /* worse_query.m */,
+				3105W102 /* worse_query.h */,
 				3105A030 /* mcm_bridge.m */,
 				3105A041 /* mcm_bridge.h */,
 				3105F100 /* wallpaper_zip.c */,
@@ -278,6 +285,7 @@
 				3105L101 /* PackageRepositoryStore.swift */,
 				3105L105 /* RepositoryPresentationSupport.swift */,
 				3105A113 /* SupportPolicy.swift */,
+				3105W101 /* UserlandAccess.swift */,
 				3105B114 /* PatchProjectModels.swift */,
 				3105B115 /* PatchPackageCodec.swift */,
 				3105B116 /* PatchKeyStore.swift */,
@@ -424,6 +432,8 @@
 				3105J206,
 				3105A240,
 				3105A241,
+				3105W200,
+				3105W201,
 				3105B214,
 				3105B215,
 				3105B216,
@@ -476,7 +486,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
-				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_ENTITLEMENTS = "ThreeOneOSFive/ThreeOneOSFive.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 8;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -510,7 +520,7 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
-				CODE_SIGN_ENTITLEMENTS = "";
+				CODE_SIGN_ENTITLEMENTS = "ThreeOneOSFive/ThreeOneOSFive.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 8;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;

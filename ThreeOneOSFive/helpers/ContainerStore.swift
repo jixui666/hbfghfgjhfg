@@ -67,8 +67,29 @@ struct FileEntry: Identifiable, Hashable {
 enum ContainerStore {
     static let appDataRoot = "/var/mobile/Containers/Data/Application"
     static let systemDataRoot = "/var/mobile/Containers/Data/System"
+
+    /// iOS 27 moved the System / shared roots from `/var/mobile/Containers` to
+    /// `/var/containers` (the upstream worse_query README lists
+    /// `/var/containers/Data/System` and `/var/containers/Shared/SystemGroup`).
+    /// Both layouts are scanned so one binary works on 26.x and 27.x.
+    static let appDataRootAliases = ["/var/containers/Data/Application"]
+    static let systemDataRootAliases = ["/var/containers/Data/System"]
+    static let pluginContainerRoots = [
+        "/var/mobile/Containers/Data/PluginKitPlugin",
+        "/var/mobile/Containers/Data/InternalDaemon",
+        "/var/containers/Data/PluginKitPlugin",
+        "/var/containers/Data/InternalDaemon"
+    ]
+
+    static var appDataRoots: [String] { [appDataRoot] + appDataRootAliases }
+    static var systemDataRoots: [String] { [systemDataRoot] + systemDataRootAliases }
+    /// Roots searched when resolving a bundle id by its container metadata.
+    static var metadataScanRoots: [String] { appDataRoots + pluginContainerRoots }
     private static var shouldUseBadQuery: Bool {
-        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 26
+        // The userland extension layer (worse_query) is the access path on
+        // 26.6.2 / 27.x and a harmless extra attempt on older builds where the
+        // kernel stage is available.
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 17
     }
     private static let applicationBundleRoots: [(path: String, nested: Bool)] = [
         ("/var/containers/Bundle/Application", true),
@@ -98,17 +119,20 @@ enum ContainerStore {
         if let path = MCMActivateContainerPath(2, bundleID, false, &lookupError),
            isApplicationContainerPath(path) {
             log("patch: MHA-C2 resolved \(bundleID)")
+            // Keep a userland extension on the container root: on 26.6.2 / 27.x
+            // the MHA lease alone does not survive a later path lookup.
+            retainAccess(path)
             return path
         }
         let detail = lookupError.map(String.init) ?? "unavailable"
         log("patch: MHA-C2 could not resolve \(bundleID), detail=\(detail)")
-        // Fallback for iOS builds where MCM refuses to hand out sandbox
-        // tokens (e.g. iOS 18.1.x): scan the app-data root with the inode
-        // walk and read each container's MCM metadata plist directly. The
-        // raw reads only succeed when the sandbox escape is active.
-        if let scanned = resolveAppContainerPathByMetadataScan(bundleID: bundleID) {
+
+        // iOS 26.6.2+ / 27.x: no kernel stage, so resolve through the userland
+        // extension layer first (anchor + relative part-domain sweep) and only
+        // then fall back to the inode/metadata walk.
+        if let path = resolveAppContainerPathByMetadataScan(bundleID: bundleID) {
             log("patch: filesystem metadata scan resolved \(bundleID)")
-            return scanned
+            return path
         }
         return nil
     }
@@ -129,6 +153,7 @@ enum ContainerStore {
                 if let path = MCMActivateContainerPath(cls, identifier, groupFlag, &lookupError),
                    !path.isEmpty {
                     log("group: MCM class-\(cls) group=\(groupFlag) resolved \(identifier) -> \(path)")
+                    retainAccess(path)
                     return path
                 }
                 let detail = lookupError.map { String($0) } ?? "unavailable"
@@ -139,25 +164,56 @@ enum ContainerStore {
     }
 
     static func resolveAppContainerPathByMetadataScan(bundleID: String) -> String? {
-        // iOS < 26: kernel R/W is enough, no need to require full sandbox escape
-        if KernelExploit.requiresSandboxEscape, !KernelExploit.hasSandboxAccess() {
-            log("patch: metadata scan skipped — sandbox access not active")
+        // Access to the container roots comes from either the kernel sandbox
+        // escape (17.x – 26.6.1) or a worse_query userland extension
+        // (26.6.2 / 27.x, where no kernel offsets exist).
+        guard hasFilesystemAccess else {
+            log("patch: metadata scan skipped — no filesystem access (kernel or userland)")
             return nil
         }
-        let dirs = enumerateDirectories(path: appDataRoot)
-        guard !dirs.isEmpty else {
-            log("patch: metadata scan unavailable — no containers enumerated")
-            return nil
-        }
-        for dir in dirs {
-            guard UUID(uuidString: (dir as NSString).lastPathComponent) != nil else { continue }
-            guard let metadata = readContainerMetadata(containerPath: dir),
-                  metadata.bundleID == bundleID else { continue }
-            let canonical = ContainerDiscoveryMerger.canonicalPath(dir)
-            guard isApplicationContainerPath(canonical) else { continue }
-            return canonical
+        for root in metadataScanRoots {
+            let dirs = enumerateDirectoriesWithTraversalGrant(path: root)
+            guard !dirs.isEmpty else { continue }
+            for dir in dirs {
+                guard UUID(uuidString: (dir as NSString).lastPathComponent) != nil else { continue }
+                // Keep the extension alive while the container is inspected and
+                // retain it on a match: the caller copies files from this
+                // container afterwards and on userland-only devices the grant is
+                // the only way in. Non-matches are released immediately.
+                let lease = retainAccess(dir)
+                let identifier = containerIdentifier(containerPath: dir)
+                guard identifier == bundleID else {
+                    if lease != nil { releaseAccess(dir) }
+                    continue
+                }
+                let canonical = ContainerDiscoveryMerger.canonicalPath(dir)
+                guard isContainerPath(canonical) else {
+                    if lease != nil { releaseAccess(dir) }
+                    continue
+                }
+                return canonical
+            }
         }
         return nil
+    }
+
+    /// Bundle id MCM stamped on a container: the containermanager xattr first
+    /// (what worse_query and Filza read), then the metadata plist.
+    static func containerIdentifier(containerPath: String) -> String? {
+        if let identifier = UserlandAccess.containerIdentifier(containerPath), !identifier.isEmpty {
+            return identifier
+        }
+        return readContainerMetadata(containerPath: containerPath)?.bundleID
+    }
+
+    /// True for any path that is a direct child of one of the scanned roots
+    /// (app data, plugin, daemon — the containers worse_query exposes on 27.x).
+    static func isContainerPath(_ path: String) -> Bool {
+        let canonical = ContainerDiscoveryMerger.canonicalPath(path)
+        let parent = (canonical as NSString).deletingLastPathComponent
+        return metadataScanRoots.contains { root in
+            ContainerDiscoveryMerger.canonicalPath(root) == parent
+        }
     }
 
     // MARK: Primary — MobileInstallation / LSApplicationWorkspace
@@ -390,9 +446,11 @@ enum ContainerStore {
             log("browser: MCM com.apple.lsd activation unavailable detail=\(detail)")
         }
 
-        let traversedSystemDirectories = enumerateDirectoriesWithTraversalGrant(path: systemDataRoot)
+        let traversedSystemDirectories = systemDataRoots.flatMap {
+            enumerateDirectoriesWithTraversalGrant(path: $0)
+        }
         let systemDirectories = traversedSystemDirectories.isEmpty
-            ? enumerateDirectories(path: systemDataRoot)
+            ? systemDataRoots.flatMap { enumerateDirectories(path: $0) }
             : traversedSystemDirectories
         for directory in systemDirectories {
             // Attempt the raw metadata read even without a traversal grant:
@@ -458,10 +516,13 @@ enum ContainerStore {
     }
 
     static func isApplicationContainerPath(_ path: String) -> Bool {
-        let canonicalRoot = ContainerDiscoveryMerger.canonicalPath(appDataRoot)
         let canonicalPath = ContainerDiscoveryMerger.canonicalPath(path)
-        guard canonicalPath.hasPrefix(canonicalRoot + "/") else { return false }
-        return UUID(uuidString: (canonicalPath as NSString).lastPathComponent) != nil
+        let lastComponent = (canonicalPath as NSString).lastPathComponent
+        guard UUID(uuidString: lastComponent) != nil else { return false }
+        let parent = (canonicalPath as NSString).deletingLastPathComponent
+        return appDataRoots.contains { root in
+            ContainerDiscoveryMerger.canonicalPath(root) == parent
+        }
     }
 
     // MARK: Filesystem discovery
@@ -548,20 +609,91 @@ enum ContainerStore {
 
     static func grantContainerAccess(_ containerPath: String) -> Int64 {
         guard shouldUseBadQuery else { return -1 }
+        // With the kernel sandbox escape active the raw path already works and a
+        // token adds nothing; skip the extension machinery entirely there.
+        if KernelExploit.hasSandboxAccess() { return -1 }
         let clean = containerPath.hasSuffix("/") ? String(containerPath.dropLast()) : containerPath
+
+        // A grant rewrites the App Group's Library/Caches, so never do it on the
+        // main thread: kick a background probe and let this call fall through to
+        // the legacy path until the route is known to work.
+        if !UserlandAccess.hasVerifiedAccess, Thread.isMainThread {
+            DispatchQueue.global(qos: .utility).async { _ = UserlandAccess.probe(force: true) }
+        }
+
+        // worse_query first: it is the route that still answers on 26.6.2 / 27.x.
+        let userland = UserlandAccess.grant(clean)
+        if userland >= 0 { return userland }
+
+        // Legacy part-domain bad_query as the second attempt.
         var pathC = clean.utf8CString.map { Int8($0) }
         return bad_query(&pathC, true, nil, false)
     }
 
+    // MARK: Retained userland leases
+
+    private static let leaseLock = NSLock()
+    private static var retainedLeases: [String: UserlandAccess.RetainedLease] = [:]
+
+    /// Keeps a userland extension alive for `path` and returns it when one was
+    /// granted. Copies and ZIP creation run while the lease is held, which is
+    /// what makes collection work on devices without the kernel stage.
+    @discardableResult
+    static func retainAccess(_ path: String) -> UserlandAccess.RetainedLease? {
+        let key = ContainerDiscoveryMerger.canonicalPath(path)
+        leaseLock.lock()
+        if let existing = retainedLeases[key] { leaseLock.unlock(); return existing }
+        leaseLock.unlock()
+
+        guard let lease = UserlandAccess.RetainedLease.acquire(path: path) else { return nil }
+        leaseLock.lock()
+        retainedLeases[key] = lease
+        leaseLock.unlock()
+        return lease
+    }
+
+    static func releaseAccess(_ path: String) {
+        let key = ContainerDiscoveryMerger.canonicalPath(path)
+        leaseLock.lock()
+        let lease = retainedLeases.removeValue(forKey: key)
+        leaseLock.unlock()
+        lease?.release()
+    }
+
+    static func releaseAllAccess() {
+        leaseLock.lock()
+        let leases = retainedLeases
+        retainedLeases.removeAll()
+        leaseLock.unlock()
+        for (_, lease) in leases { lease.release() }
+    }
+
+    /// Whether a filesystem read outside the app container is possible at all
+    /// (kernel sandbox escape or userland extension).
+    static var hasFilesystemAccess: Bool {
+        if KernelExploit.hasSandboxAccess() { return true }
+        if UserlandAccess.hasVerifiedAccess { return true }
+        // A grant rewrites the App Group's Library/Caches; never do that on the
+        // main thread — start the probe in the background and report "not yet".
+        if Thread.isMainThread {
+            DispatchQueue.global(qos: .utility).async { _ = UserlandAccess.probe(force: true) }
+            return false
+        }
+        return UserlandAccess.isAvailable
+    }
+
     static func containersFromFilesystem() -> [InstalledApp] {
-        let grantedDirectories = enumerateDirectoriesWithTraversalGrant(path: appDataRoot)
-        let dirs: [String]
-        if grantedDirectories.isEmpty {
-            dirs = enumerateDirectories(path: appDataRoot)
-            log("browser: filesystem root=\(appDataRoot) inode fallback enumerated \(dirs.count) containers")
-        } else {
-            dirs = grantedDirectories
-            log("browser: filesystem root=\(appDataRoot) traversal enumerated \(dirs.count) containers")
+        var dirs: [String] = []
+        var seen = Set<String>()
+        for root in appDataRoots {
+            let granted = enumerateDirectoriesWithTraversalGrant(path: root)
+            let listed = granted.isEmpty ? enumerateDirectories(path: root) : granted
+            for dir in listed {
+                let canonical = ContainerDiscoveryMerger.canonicalPath(dir)
+                guard seen.insert(canonical).inserted else { continue }
+                dirs.append(dir)
+            }
+            log("browser: filesystem root=\(root) enumerated \(listed.count) containers")
         }
         let apps = dirs.compactMap { dir -> InstalledApp? in
             let uuid = (dir as NSString).lastPathComponent
@@ -586,17 +718,16 @@ enum ContainerStore {
     ) -> InstalledApp? {
         guard UUID(uuidString: fallback.bundleID) != nil else { return fallback }
 
-        // Read the MCM metadata plist directly. With the sandbox escape
-        // active the raw read succeeds even when every MCM/bad_query grant
-        // is denied; without it the read simply fails and we fall through.
-        if let metadata = readContainerMetadata(containerPath: fallback.containerPath) {
-            let bundleID = metadata.bundleID.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Read the MCM identifier (containermanager xattr first, metadata plist
+        // second). With the sandbox escape active the raw read succeeds even when
+        // every MCM/bad_query grant is denied; on userland-only devices the
+        // caller already holds a worse_query extension for this container.
+        if let identifier = containerIdentifier(containerPath: fallback.containerPath) {
+            let bundleID = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
             if ContainerBundleCandidateResolver.isValidBundleIdentifier(bundleID),
                !bundleID.hasPrefix("systemgroup.") {
                 let info = appInfoForBundleID(bundleID) as? [String: Any] ?? [:]
-                let resolvedName = metadata.displayName.isEmpty
-                    ? (info["name"] as? String ?? bundleID)
-                    : metadata.displayName
+                let resolvedName = info["name"] as? String ?? bundleID
                 return InstalledApp(
                     bundleID: bundleID,
                     name: resolvedName,

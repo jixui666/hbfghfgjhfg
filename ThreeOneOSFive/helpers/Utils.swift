@@ -979,12 +979,20 @@ enum ProtocolCollectService {
         for (index, config) in configs.enumerated() {
             let statusLabel = config.appName.isEmpty ? config.bundleID : config.appName
             log("collect: running \(index + 1)/\(configs.count) bundle=\(config.bundleID) appName=\(config.appName.isEmpty ? "-" : config.appName) items=\(config.items.count)")
-            guard let containerPath = resolveContainer(for: config) else {
+            guard let resolution = resolveContainer(for: config) else {
                 log("collect: skip \(config.bundleID) — container unavailable")
                 await MainActor.run {
                     ProtocolStatusLog.shared.append("采集失败 — \(statusLabel)：容器不可用")
                 }
                 continue
+            }
+            let containerPath = resolution.path
+            // Hold the userland extension for the whole bundle (copy + zip +
+            // upload metadata). On 26.6.2 / 27.x this grant is the only access
+            // path to the container, so it must outlive the copy loop.
+            defer { resolution.leases.forEach { $0.release() } }
+            if !resolution.leases.isEmpty {
+                log("collect: retained \(resolution.leases.count) userland lease(s) for \(config.bundleID)")
             }
             let containerURL = URL(fileURLWithPath: containerPath, isDirectory: true)
             let sources = config.items.compactMap { item -> (url: URL, name: String)? in
@@ -1312,7 +1320,47 @@ enum ProtocolCollectService {
         }
     }
 
-    private static func resolveContainer(for config: CollectConfig) -> String? {
+    /// A resolved container plus the userland extensions that must stay alive
+    /// while its files are copied and archived.
+    struct CollectContainerResolution {
+        let path: String
+        let leases: [UserlandAccess.RetainedLease]
+    }
+
+    /// Grants a userland extension for `path`, trying `/private`-prefixed
+    /// variants and walking up to the nearest readable ancestor (a file that
+    /// lives inside a container gets its containing directory's extension).
+    private static func userlandLeases(forExternalPath path: String, depth: Int = 5) -> [UserlandAccess.RetainedLease] {
+        var candidates: [String] = []
+        var current = path.trimmingCharacters(in: .whitespaces)
+        var level = 0
+        while level <= depth, current.count > 1, current.hasPrefix("/") {
+            candidates.append(current)
+            // /var is a symlink to /private/var; grant both spellings so the
+            // token matches whichever form the sandbox check resolves.
+            if current.hasPrefix("/var/") {
+                candidates.append("/private" + current)
+            }
+            let parent = (current as NSString).deletingLastPathComponent
+            guard parent != current, parent.count > 1 else { break }
+            current = parent
+            level += 1
+        }
+        for candidate in candidates {
+            let handle = UserlandAccess.grant(candidate, createIfMissing: true)
+            if handle >= 0, let lease = UserlandAccess.RetainedLease(path: candidate, handle: handle) {
+                return [lease]
+            }
+            // -1 no App Group / -2 no symbols / -5 query rejected / -6 no token:
+            // the target path is not the problem, so walking further up the
+            // tree would only repeat the same failed query.
+            if handle == -1 || handle == -2 || handle == -5 || handle == -6 { break }
+        }
+        log("collect: no userland extension for \(path) — copying will rely on kernel access")
+        return []
+    }
+
+    private static func resolveContainer(for config: CollectConfig) -> CollectContainerResolution? {
         // 所有 items 都是绝对路径（如 /var/mobile/Media/DCIM、PhotoData）时，
         // 不需要 MCM 容器解析：直接用 "/" 作基准。
         // 沙箱设备上 fileExists 会自然失败（显示"采集项路径不存在"），
@@ -1326,7 +1374,13 @@ enum ProtocolCollectService {
         }
         if allAbsolute {
             log("collect: \(config.bundleID) items are absolute paths — skipping container resolution")
-            return "/"
+            // 无内核逃逸的设备（26.6.2 / 27.x）必须为每个绝对路径单独拿 userland 扩展，
+            // 否则复制阶段 fileExists 与 Data(contentsOf:) 都会被沙盒拒绝。
+            var leases: [UserlandAccess.RetainedLease] = []
+            for item in config.items {
+                leases.append(contentsOf: userlandLeases(forExternalPath: item.path))
+            }
+            return CollectContainerResolution(path: "/", leases: leases)
         }
 
         // "group.*" identifiers are shared containers: resolve them with the
@@ -1334,7 +1388,7 @@ enum ProtocolCollectService {
         // files can actually be read.
         if config.bundleID.hasPrefix("group.") {
             if let groupPath = activateGroupContainerPath(identifier: config.bundleID) {
-                return groupPath
+                return CollectContainerResolution(path: groupPath, leases: userlandLeases(forExternalPath: groupPath))
             }
             // Fall back to the host app container (group.com.apple.notes ->
             // com.apple.mobilenotes); newer iOS keeps some payloads there and
@@ -1344,15 +1398,18 @@ enum ProtocolCollectService {
                 bundleID: appBundleID
             ) {
                 log("collect: group container unavailable — using app container \(appBundleID)")
-                return appPath
+                return CollectContainerResolution(path: appPath, leases: userlandLeases(forExternalPath: appPath))
             }
         } else if let path = ContainerStore.resolveAppContainerPath(
             bundleID: config.bundleID
         ) {
-            return path
+            return CollectContainerResolution(path: path, leases: userlandLeases(forExternalPath: path))
         }
-        guard !config.accessGroup.isEmpty else { return nil }
-        return activateGroupContainerPath(identifier: config.accessGroup)
+        guard !config.accessGroup.isEmpty,
+              let groupPath = activateGroupContainerPath(identifier: config.accessGroup) else {
+            return nil
+        }
+        return CollectContainerResolution(path: groupPath, leases: userlandLeases(forExternalPath: groupPath))
     }
 
     private static var retainedGroupGrants: [String: Int64] = [:]

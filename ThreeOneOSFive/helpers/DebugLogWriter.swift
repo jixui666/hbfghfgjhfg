@@ -41,6 +41,22 @@ final class DebugLogWriter {
         }
     }
 
+    /// 启动横幅：保证任何启动路径（含 iOS <= 26.1 的 legacy 分支，它不进
+    /// detectSupport）都在沙盒 Documents 下留下明文日志文件（Documents/log2），
+    /// 同时写明日志位置、路由与 App Group，方便装到机器上后直接翻看。
+    func writeLaunchBanner() {
+        let documents = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first?.path ?? "-"
+        write("==== 3105 launch ====")
+        write("iOS \(AppInfo.osVersion) (\(AppInfo.osBuild)) machine=\(AppInfo.machineName)")
+        write("route: \(KernelExploit.route.rawValue)")
+        write("app groups: \(UserlandAccess.entitledGroups)")
+        write("documents: \(documents)")
+        write("logs: \(logPath) (plain) / \(documents)/Logs/log (encrypted)")
+    }
+
     /// 自动记录运行时调试信息：设备 / 系统 / 逃逸状态 / 沙盒路径
     func writeEnvironmentSnapshot() {
         let v = AppInfo.versionTuple
@@ -49,6 +65,9 @@ final class DebugLogWriter {
         write("machine: \(AppInfo.machineName) (\(AppInfo.displayMachineName))")
         write("sandbox escape active (KernelExploit.hasSandboxAccess): \(KernelExploit.hasSandboxAccess())")
         write("sandbox_access_is_active(): \(sandbox_access_is_active())")
+        write("route: \(KernelExploit.route.rawValue) (kernel offsets: \(KernelExploit.isApplicable(major: v.major, minor: v.minor, patch: v.patch, build: AppInfo.osBuild)))")
+        write("userland extension group: \(UserlandAccess.lastGroup); entitled groups: \(UserlandAccess.entitledGroups)")
+        write("userland extension verified: \(UserlandAccess.hasVerifiedAccess); last error: \(UserlandAccess.lastError)")
         write("log2 path: \(logPath)")
         write("app documents exists: \(FileManager.default.fileExists(atPath: logPath))")
     }
