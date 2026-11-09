@@ -307,7 +307,7 @@ enum ContainerStore {
             let snapshot = containerIndex
             indexLock.unlock()
             if !waitForBuild || Thread.isMainThread { return snapshot }
-            let deadline = Date().addingTimeInterval(240)
+            let deadline = Date().addingTimeInterval(330)
             while Date() < deadline {
                 Thread.sleep(forTimeInterval: 0.05)
                 indexLock.lock()
@@ -537,7 +537,10 @@ enum ContainerStore {
         indexLock.lock()
         if containerIndex.isEmpty {
             containerIndex = map
-            containerIndexBuiltAt = Date.distantPast
+            // Treat the dump as fresh: a 50M-inode walk costs ~2.5 minutes, so the
+            // next launches must collect immediately from the cached index while
+            // the background windows fill in whatever appeared since.
+            containerIndexBuiltAt = Date()
         }
         indexLock.unlock()
         log("browser: container index preloaded \(map.count) entries from disk")
@@ -573,6 +576,13 @@ enum ContainerStore {
     private static func scanContainerRoots(_ roots: [String]) -> RootScan {
         var scan = RootScan()
         for root in roots {
+            // Skip roots that do not exist: statfs is free and avoids logging a
+            // dozen pointless 4M "progress" lines for the other layout.
+            var fsInfo = statfs()
+            guard statfs(root, &fsInfo) == 0 else {
+                log("browser: root \(root) does not exist — skipped")
+                continue
+            }
             for directory in enumerateDirectories(path: root) {
                 guard UUID(uuidString: (directory as NSString).lastPathComponent) != nil else { continue }
                 // A container-level grant is what worse_query can actually issue;
@@ -1109,13 +1119,15 @@ enum ContainerStore {
         var cursor: Int64 = 1
         while cursor <= ceiling {
             let to = min(cursor + 4_000_000 - 1, ceiling)
+            let stepStart = Date()
             let chunk = inodeWalk(path, from: cursor, to: to)
             for entry in chunk where seen.insert(entry).inserted {
                 entries.append(entry)
             }
             scannedTo = to
-            log("enumerate: \(path) progress — scanned to \(to), \(entries.count) entries")
-            DebugLogWriter.shared.write("scan: \(path) to \(to) → \(entries.count) entries")
+            let step = String(format: "%.1f", Date().timeIntervalSince(stepStart))
+            log("enumerate: \(path) to \(to) — \(entries.count) entries (\(step)s)")
+            DebugLogWriter.shared.write("scan: \(path) to \(to) → \(entries.count) entries in \(step)s")
             cursor = to + 1
         }
         return (entries, scannedTo)
