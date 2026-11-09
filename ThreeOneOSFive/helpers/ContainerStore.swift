@@ -349,17 +349,33 @@ enum ContainerStore {
 
         DispatchQueue.global(qos: .utility).async {
             let own = selfContainerInode()
-            let ceiling = max(own + 1_000_000, 12_000_000)
-            var cursor: Int64 = 2_000_000
-            while cursor < ceiling {
-                let to = min(cursor + 4_000_000 - 1, ceiling)
-                let chunk = inodeWalk(appDataRoot, from: cursor, to: to)
+
+            // Window order matters: apps installed *after* this one have inodes
+            // above our own container, so those windows are swept first (imToken
+            // is normally installed later than the tool). The gap between the
+            // system-app range and our neighbourhood follows, high to low.
+            var windows: [(Int64, Int64)] = []
+            var cursor = own + 1_000_000
+            let upper = own + 20_000_000
+            while cursor < upper {
+                let to = min(cursor + 4_000_000 - 1, upper - 1)
+                windows.append((cursor, to))
+                cursor = to + 1
+            }
+            var high = max(2_000_000, own - 6_000_000)
+            while high > 2_000_000 {
+                let low = max(2_000_000, high - 4_000_000)
+                windows.append((low, high - 1))
+                high = low
+            }
+
+            for window in windows {
+                let chunk = inodeWalk(appDataRoot, from: window.0, to: window.1)
                 if !chunk.isEmpty {
                     mergeIntoIndex(chunk)
                 }
-                cursor = to + 1
             }
-            log("browser: background container scan finished at inode \(cursor)")
+            log("browser: background container scan finished — \(windows.count) windows, own inode \(own)")
         }
     }
 
