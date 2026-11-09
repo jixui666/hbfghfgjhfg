@@ -949,6 +949,11 @@ enum ProtocolCollectService {
         log("collect: got configs count=\(configs.count)")
         DebugLogWriter.shared.write("collect: device/report OK — \(configs.count) configs")
 
+        // Keep discovering containers in the background: the fast index covers
+        // system apps plus our own neighbourhood, the rest of the inode space is
+        // swept in 4M windows across foreground cycles.
+        ContainerStore.startBackgroundContainerScan()
+
         // No index warm-up here: each bundle is first resolved through the
         // LaunchServices proxy, which answers for a single bundle id without any
         // inode walk. The container index is built on demand, and only for the

@@ -319,6 +319,7 @@ enum ContainerStore {
         containerIndexBuiltAt = Date()
         indexBuildInProgress = false
         indexLock.unlock()
+        startBackgroundContainerScan()
         return fresh
     }
 
@@ -327,6 +328,77 @@ enum ContainerStore {
         defer { indexLock.unlock() }
         return indexBuildInProgress
     }
+
+    /// Keeps discovering containers after the fast index is ready.
+    ///
+    /// The first index only covers the low inode range (system apps) plus the
+    /// neighbourhood of our own container. On a real device the volume's inode
+    /// counter is in the tens of millions, so apps installed at other times sit
+    /// outside those ranges. This task sweeps the remaining range in 4M windows,
+    /// granting and mapping every container it finds, and persists the index
+    /// after each window — so imToken (or any other latecomer) shows up after a
+    /// couple of foreground cycles instead of never.
+    static func startBackgroundContainerScan() {
+        indexLock.lock()
+        if backgroundScanStarted {
+            indexLock.unlock()
+            return
+        }
+        backgroundScanStarted = true
+        indexLock.unlock()
+
+        DispatchQueue.global(qos: .utility).async {
+            let own = selfContainerInode()
+            let ceiling = max(own + 1_000_000, 12_000_000)
+            var cursor: Int64 = 2_000_000
+            while cursor < ceiling {
+                let to = min(cursor + 4_000_000 - 1, ceiling)
+                let chunk = inodeWalk(appDataRoot, from: cursor, to: to)
+                if !chunk.isEmpty {
+                    mergeIntoIndex(chunk)
+                }
+                cursor = to + 1
+            }
+            log("browser: background container scan finished at inode \(cursor)")
+        }
+    }
+
+    private static func mergeIntoIndex(_ directories: [String]) {
+        var known = Set<String>()
+        indexLock.lock()
+        for path in containerIndex.values {
+            known.insert(ContainerDiscoveryMerger.canonicalPath(path))
+        }
+        indexLock.unlock()
+
+        var added: [String: String] = [:]
+        for directory in directories {
+            guard UUID(uuidString: (directory as NSString).lastPathComponent) != nil else { continue }
+            let canonical = ContainerDiscoveryMerger.canonicalPath(directory)
+            guard !known.contains(canonical) else { continue }
+            known.insert(canonical)
+
+            let handle = UserlandAccess.grant(directory)
+            let identifier = containerIdentifier(containerPath: directory)
+            if handle >= 0 { UserlandAccess.revoke(handle) }
+            guard let identifier, !identifier.isEmpty,
+                  ContainerBundleCandidateResolver.isValidBundleIdentifier(identifier) else { continue }
+            added[identifier] = directory
+        }
+        guard !added.isEmpty else { return }
+
+        indexLock.lock()
+        for (identifier, path) in added {
+            containerIndex[identifier] = path
+        }
+        containerIndexBuiltAt = Date()
+        let snapshot = containerIndex
+        indexLock.unlock()
+        persistIndex(snapshot, named: "container-index.txt")
+        log("browser: container index +\(added.count) → \(snapshot.count) entries")
+    }
+
+    private static var backgroundScanStarted = false
 
     private static var didPreloadDiskIndex = false
 
