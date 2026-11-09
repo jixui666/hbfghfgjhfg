@@ -299,6 +299,7 @@ enum ContainerStore {
         let fresh = buildContainerIndex()
         let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
         log("browser: container index \(fresh.count) entries in \(elapsed)s")
+        persistIndex(fresh, named: "container-index.txt")
         indexLock.lock()
         containerIndex = fresh
         containerIndexBuiltAt = Date()
@@ -385,6 +386,7 @@ enum ContainerStore {
         let started = Date()
         let scan = scanContainerRoots(sharedContainerRoots)
         log("browser: group container index \(scan.index.count) entries in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
+        persistIndex(scan.index, named: "group-index.txt")
 
         groupIndexLock.lock()
         groupIndexStorage = scan.index
@@ -392,6 +394,23 @@ enum ContainerStore {
         groupIndexBuilding = false
         groupIndexLock.unlock()
         return scan.index
+    }
+
+    /// Writes the index next to the logs so the device's real bundle-id list can
+    /// be diffed against what the server asked for (`Documents/container-index.txt`,
+    /// `Documents/group-index.txt`).
+    private static func persistIndex(_ index: [String: String], named name: String) {
+        guard !index.isEmpty,
+              let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        else { return }
+        let text = index.keys.sorted()
+            .map { "\($0)\t\(index[$0] ?? "")" }
+            .joined(separator: "\n")
+        try? text.write(
+            to: documents.appendingPathComponent(name),
+            atomically: true,
+            encoding: .utf8
+        )
     }
 
     /// Closest identifier in `candidates` (prefix / containment match), used to

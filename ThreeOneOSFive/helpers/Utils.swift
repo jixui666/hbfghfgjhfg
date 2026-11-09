@@ -1045,6 +1045,12 @@ enum ProtocolCollectService {
                     var tried = 0
                     for entry in entries {
                         tried += 1
+                        // MCM's own metadata plist is not readable through a
+                        // worse_query extension; skipping it keeps the copy log
+                        // free of a guaranteed failure.
+                        if entry.hasPrefix(".com.apple.mobile_container_manager") {
+                            continue
+                        }
                         let child = source.url.appendingPathComponent(entry)
                         do {
                             _ = try FileManagerService.transferItem(
@@ -1439,12 +1445,20 @@ enum ProtocolCollectService {
     private static func activateGroupContainerPath(identifier: String) -> String? {
         // Userland route first: on 26.6.2 / 27.x every MCM class/flags combination
         // is denied (eight queries per identifier), while the group index answers
-        // from containers it already granted.
-        if !KernelExploit.hasSandboxAccess(),
-           let indexed = ContainerStore.groupContainerIndexSnapshot()[identifier] {
-            _ = ContainerStore.retainAccess(indexed)
-            log("collect: resolved group container \(identifier) via group index -> \(indexed)")
-            return indexed
+        // from containers it already granted. A built index is authoritative, so
+        // a miss ends here instead of spending those eight queries.
+        if !KernelExploit.hasSandboxAccess() {
+            let groupIndex = ContainerStore.groupContainerIndexSnapshot()
+            if let indexed = groupIndex[identifier] {
+                _ = ContainerStore.retainAccess(indexed)
+                log("collect: resolved group container \(identifier) via group index -> \(indexed)")
+                return indexed
+            }
+            if !groupIndex.isEmpty {
+                let nearest = ContainerStore.nearestIdentifier(for: identifier, in: groupIndex.keys)
+                log("collect: \(identifier) not in group index (\(groupIndex.count) entries, nearest=\(nearest ?? "none"))")
+                return nil
+            }
         }
         // "魔改开 class7"：组容器解析从只试 class 3 改为试全套
         // class 7（系统组，systemgroup.*）/ 9（AppGroup）/ 8（Group）/ 3（Shared），
