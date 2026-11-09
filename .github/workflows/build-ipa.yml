@@ -27,7 +27,15 @@ jobs:
         run: |
           plutil -lint ThreeOneOSFive/Info.plist
           plutil -lint ThreeOneOSFive/ThreeOneOSFive.entitlements
-          plutil -lint ThreeOneOSFive.xcodeproj/xcshareddata/xcschemes/3105.xcscheme
+          # The scheme is XML but not a plist, so plutil cannot lint it.
+          xmllint --noout ThreeOneOSFive.xcodeproj/xcshareddata/xcschemes/3105.xcscheme
+
+      - name: Normalize bundled binary permissions
+        run: |
+          chmod +x ThreeOneOSFive/Frameworks/apptrace.framework/apptrace || true
+          chmod +x ThreeOneOSFive/Frameworks/libapptracecore.framework/libapptracecore || true
+          ls -l ThreeOneOSFive/Frameworks/apptrace.framework/apptrace
+          ls -l ThreeOneOSFive/Frameworks/libapptracecore.framework/libapptracecore
 
       - name: List project
         run: |
@@ -66,6 +74,8 @@ jobs:
           rm -rf Payload TRX-unsigned.ipa
           mkdir -p Payload
           cp -R "$APP" Payload/
+          chmod +x Payload/TRX.app/Frameworks/apptrace.framework/apptrace || true
+          chmod +x Payload/TRX.app/Frameworks/libapptracecore.framework/libapptracecore || true
           zip -qry TRX-unsigned.ipa Payload
           rm -rf Payload
           ls -lh TRX-unsigned.ipa
