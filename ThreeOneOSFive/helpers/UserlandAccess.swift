@@ -81,7 +81,21 @@ enum UserlandAccess {
         if !running { probeInFlight = true }
         lock.unlock()
 
-        if running { return false }
+        if running {
+            // Another thread is probing. Waiting here is what keeps the
+            // collection cycle from concluding "no access" while the probe that
+            // would prove otherwise is still in flight.
+            let deadline = Date().addingTimeInterval(40)
+            while Date() < deadline {
+                lock.lock()
+                let stillRunning = probeInFlight
+                let known = cachedProbeResult
+                lock.unlock()
+                if !stillRunning { return known == true }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            return hasVerifiedAccess
+        }
 
         let started = Date()
         var succeeded = false

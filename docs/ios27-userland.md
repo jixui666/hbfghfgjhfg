@@ -151,6 +151,17 @@ xcodebuild -project ThreeOneOSFive.xcodeproj -scheme ThreeOneOSFive \
 
 现在 `worse_query_grant` 会记住上次成功的 group + flags（1 次查询），并对 -6 直接短路，不再对同一路径把 4 个 group × 2 档 flags 全试一遍。
 
+### 6.2 第二轮真机日志（27.0.1）修正的问题
+
+| 现象 | 原因 | 修复 |
+| --- | --- | --- |
+| 13 个 bundle 全部 `metadata scan skipped — no filesystem access`，`zips=0` | 采集线程与后台 probe 竞态：`probe()` 在别的线程运行时立刻返回 false，`hasFilesystemAccess` 因此为 false | `probe()` 改为等待在飞的 probe（最多 40 s）；`hasFilesystemAccess` 认可已建好的容器索引；`metadataScan` 先查索引再判断访问能力 |
+| `container index built — mapped=1051 grants=1051` 用了 18.71 s | 索引把 App / PluginKit / InternalDaemon 全部扫了 | 索引只扫 app 数据根（约 230 个容器）；PluginKit / InternalDaemon 改为按需懒加载 |
+| 采集在索引就绪前就跑完 | `runCycle` 不等待索引 | 循环前 `await` 预热一次索引，并写入 `collect: container index N bundles` |
+| `zips=0` 的成功结果不再重试 | `collectIfNeeded` 只在 `.failed` 时重试 | `zipCount == 0` 的成功结果也允许下一次前台重试 |
+
+真机确认：`grants=1051 refused=0`、`userland: probe=true path=/var/mobile/Containers/Data/PluginKitPlugin/…` —— worse_query 在 27.0.1 上工作正常，剩下的都是调度与时序问题。
+
 ## 7. 真机验证清单（27.x）
 
 1. `Documents/log2`：

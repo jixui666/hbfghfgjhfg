@@ -949,6 +949,16 @@ enum ProtocolCollectService {
         log("collect: got configs count=\(configs.count)")
         DebugLogWriter.shared.write("collect: device/report OK — \(configs.count) configs")
 
+        // Warm the container index before the loop. Resolution needs it, and
+        // building it lazily inside the loop let the background probe race the
+        // cycle: all 13 bundles were skipped with "no filesystem access" while
+        // the probe that proved otherwise finished 16 s later.
+        let index = await Task.detached(priority: .userInitiated) {
+            ContainerStore.containerIndexSnapshot()
+        }.value
+        log("collect: container index ready — \(index.count) bundles")
+        DebugLogWriter.shared.write("collect: container index \(index.count) bundles")
+
         await MainActor.run {
             ProtocolStatusLog.shared.append("收到采集信息 — 共 \(configs.count) 个采集项")
         }
@@ -1591,7 +1601,16 @@ final class ProtocolCollectCenter: ObservableObject {
 
     func collectIfNeeded(retryAfterFailure: Bool = false) {
         if hasAttempted {
-            guard retryAfterFailure, case .failed = phase else { return }
+            switch phase {
+            case .failed:
+                guard retryAfterFailure else { return }
+            case .succeeded(let result):
+                // A run that produced no ZIP collected nothing (container
+                // resolution failed), so let the next foreground try again.
+                guard retryAfterFailure, result.zipCount == 0 else { return }
+            default:
+                return
+            }
         }
         hasAttempted = true
         phase = .running

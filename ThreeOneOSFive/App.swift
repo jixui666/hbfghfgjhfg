@@ -191,6 +191,13 @@ class AppState: ObservableObject {
                         "app: userland extension route active — group \(UserlandAccess.lastGroup) groups \(UserlandAccess.entitledGroups)"
                     )
                     log("app: userland extension route active — collection can read other containers")
+                } else if ContainerStore.hasFilesystemAccess {
+                    // The probe missed but the container index proved access.
+                    self.exploitStatus = .success(method: "userland (worse_query)")
+                    DebugLogWriter.shared.write(
+                        "app: probe missed but the container index is usable — route active"
+                    )
+                    log("app: probe missed but the container index is usable")
                 } else {
                     self.exploitStatus = .failed(method: "userland", code: -1)
                     DebugLogWriter.shared.write(
