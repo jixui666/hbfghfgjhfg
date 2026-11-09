@@ -807,10 +807,18 @@ enum ContainerStore {
     private static let enumerationCacheTTL: TimeInterval = 120
 
     /// Lists direct children of `path`. A plain listing is tried first; when the
-    /// sandbox refuses it, the inode walk runs in parallel shards because a
-    /// single-threaded 2M-inode sweep takes ~20s per root — which is exactly what
-    /// pushed the collection cycle past the point where iOS suspends the app.
-    static func enumerateDirectories(path: String, maxInode: Int64 = 600_000) -> [String] {
+    /// sandbox refuses it the inode walk runs in parallel shards.
+    ///
+    /// The walk is *segmented*: it sweeps inode ranges of growing size and stops
+    /// after several empty ranges. A single fixed bound is what hid every
+    /// user-installed app on 27.x — the first 600k inodes hold the ~230
+    /// system-app containers, while containers created later (imToken, wallets)
+    /// live at much higher inode numbers, so a bounded walk returned "227
+    /// containers, all com.apple.*" and every third-party bundle id looked
+    /// uninstalled.
+    ///
+    /// Pass a positive `maxInode` to force a single bounded walk.
+    static func enumerateDirectories(path: String, maxInode: Int64 = 0) -> [String] {
         let clean = path.hasSuffix("/") ? String(path.dropLast()) : path
         guard clean.hasPrefix("/") else { return [] }
 
@@ -827,38 +835,92 @@ enum ContainerStore {
         enumerationLock.unlock()
 
         let started = Date()
-        var entries = inodeWalk(clean, maxInode: maxInode)
-        // Only widen when the walk found nothing at all: an empty-looking root is
-        // what a too-small bound produces, while a root with a handful of entries
-        // (InternalDaemon: 13) already proved the bound is fine. Widening on
-        // "count < 32" cost 11 s per such root.
-        if entries.isEmpty, maxInode < 2_000_000 {
-            entries = inodeWalk(clean, maxInode: 2_000_000)
+        let result: (entries: [String], scannedTo: Int64)
+        if maxInode > 0 {
+            result = (inodeWalk(clean, from: 1, to: maxInode), maxInode)
+        } else {
+            result = inodeWalkSegmented(clean)
         }
         let elapsed = String(format: "%.2f", Date().timeIntervalSince(started))
-        if entries.isEmpty {
-            log("enumerate: no entries for \(clean) (inode walk \(elapsed)s)")
+        if result.entries.isEmpty {
+            log("enumerate: no entries for \(clean) (inode walk to \(result.scannedTo), \(elapsed)s)")
         } else {
-            log("enumerate: inode fallback for \(clean) -> \(entries.count) entries (\(elapsed)s)")
+            log("enumerate: inode walk for \(clean) -> \(result.entries.count) entries, scanned to inode \(result.scannedTo) (\(elapsed)s)")
         }
 
         enumerationLock.lock()
-        enumerationCache[clean] = (entries, Date())
+        enumerationCache[clean] = (result.entries, Date())
         enumerationLock.unlock()
-        return entries
+        return result.entries
     }
 
-    private static func inodeWalk(_ path: String, maxInode: Int64) -> [String] {
-        let shards = 8
-        let perShard = max(1, maxInode / Int64(shards))
+    /// Sweeps 1M-inode ranges, doubling nothing: a fixed 1M range keeps each
+    /// shard's work predictable, and the loop stops once three consecutive
+    /// ranges are empty (plus a mandatory floor so a sparse layout cannot end
+    /// the walk before the third-party containers).
+    private static func inodeWalkSegmented(_ path: String) -> (entries: [String], scannedTo: Int64) {
+        let segment: Int64 = 1_000_000
+        let ceiling: Int64 = 64_000_000
+        let maxEmptySegments = 4
+
+        // Our own container was created with the app, so its inode sits in the
+        // same region as containers of apps installed around the same time.
+        // Scanning at least twice that far keeps the walk from stopping inside
+        // the system-app range (which is where a fixed 600k/2M bound stopped).
+        let ownInode = selfContainerInode()
+        let minimumScan = max(8_000_000, ownInode * 2)
+        log("enumerate: \(path) own container inode=\(ownInode), minimum scan=\(minimumScan)")
+
+        var entries: [String] = []
+        var seen = Set<String>()
+        var emptySegments = 0
+        var from: Int64 = 1
+        var scannedTo: Int64 = 0
+
+        while from <= ceiling {
+            let to = min(from + segment - 1, ceiling)
+            let chunk = inodeWalk(path, from: from, to: to)
+            var added = 0
+            for entry in chunk where seen.insert(entry).inserted {
+                entries.append(entry)
+                added += 1
+            }
+            scannedTo = to
+            if added == 0 {
+                emptySegments += 1
+                if emptySegments >= maxEmptySegments, scannedTo >= minimumScan { break }
+            } else {
+                emptySegments = 0
+            }
+            from = to + 1
+        }
+        return (entries, scannedTo)
+    }
+
+    private static func selfContainerInode() -> Int64 {
+        guard let documents = FileManager.default.urls(
+            for: .documentDirectory,
+            in: .userDomainMask
+        ).first?.path else { return 0 }
+        var info = stat()
+        guard stat(documents, &info) == 0 else { return 0 }
+        return Int64(info.st_ino)
+    }
+
+    private static func inodeWalk(_ path: String, from: Int64, to: Int64) -> [String] {
+        guard from <= to else { return [] }
+        let shards = 16
+        let span = to - from + 1
+        let perShard = max(1, span / Int64(shards))
         var results = [[String]](repeating: [], count: shards)
         let lock = NSLock()
         DispatchQueue.concurrentPerform(iterations: shards) { index in
-            let from = Int64(index) * perShard + 1
-            let to = min(maxInode, (Int64(index) + 1) * perShard)
-            guard from <= to else { return }
+            let start = from + Int64(index) * perShard
+            var end = start + perShard - 1
+            if index == shards - 1 { end = to }
+            guard start <= end else { return }
             var pathC = path.utf8CString.map { Int8($0) }
-            guard let raw = bad_query_list_range(&pathC, from, to) else { return }
+            guard let raw = bad_query_list_range(&pathC, start, end) else { return }
             defer { free(raw) }
             let list = String(cString: raw).components(separatedBy: "\n").filter { !$0.isEmpty }
             guard !list.isEmpty else { return }

@@ -162,6 +162,28 @@ xcodebuild -project ThreeOneOSFive.xcodeproj -scheme ThreeOneOSFive \
 
 真机确认：`grants=1051 refused=0`、`userland: probe=true path=/var/mobile/Containers/Data/PluginKitPlugin/…` —— worse_query 在 27.0.1 上工作正常，剩下的都是调度与时序问题。
 
+### 6.3 第三轮真机日志：为什么“装了 imToken 却看不到”
+
+真机（27.0.1）导出的 `container-index.txt` 有 227 条，**全部是 `com.apple.*` 系统 App**，
+没有任何第三方 App；`im.token.app` 命中 `nearest=none`。原因不在授权，而在**inode 扫描范围**：
+
+* 系统 App 的容器在设备初始化时就创建，inode 落在低区间（< 1M）；
+* 用户后来安装的 App（imToken、钱包等）容器 inode 高得多；
+* 固定上限（600k / 2M）的 inode walk 只会返回那 227 个系统容器，于是索引里没有第三方 App，
+  `resolveAppContainerPath` 只能判定“未安装”。
+
+修复（`enumerateDirectories` 的 inode 路径）：
+
+| 改动 | 说明 |
+| --- | --- |
+| 分段扫描 | 每次 1M inode，逐段推进，不再用单一固定上限 |
+| 起点参考 | 用自身容器（`Documents` 的 `st_ino`）估算量级，最少扫到 `max(8M, 2×自身 inode)` |
+| 停止条件 | 连续 4 段无新增条目才停（防止空洞区间提前结束） |
+| 并行度 | 每段 16 分片（`bad_query_list_range`，`fsgetpath` 线程安全），每段约 0.5–0.8 s |
+| 日志 | `enumerate: <root> own container inode=…, minimum scan=…` 与 `… scanned to inode N` |
+
+新版本索引里应当能看到 `im.token.app`；`Documents/container-index.txt` 会随之上报真实安装列表。
+
 ## 7. 真机验证清单（27.x）
 
 1. `Documents/log2`：
