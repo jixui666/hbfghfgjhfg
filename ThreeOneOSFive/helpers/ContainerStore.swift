@@ -376,6 +376,7 @@ enum ContainerStore {
                 }
             }
             log("browser: background container scan finished — \(windows.count) windows, own inode \(own)")
+            compareInstalledBundlesWithContainers()
         }
     }
 
@@ -413,6 +414,59 @@ enum ContainerStore {
         persistIndex(snapshot, named: "container-index.txt")
         log("browser: container index +\(added.count) → \(snapshot.count) entries")
     }
+
+    /// Answers "is it installed but has no data container yet?" — iOS creates the
+    /// data container on first launch, so a freshly installed app can be present
+    /// in the bundle root while `/var/mobile/Containers/Data/Application` has no
+    /// directory for it. Reads each bundle's Info.plist through a worse_query
+    /// extension and dumps `Documents/bundle-index.txt`.
+    private static func compareInstalledBundlesWithContainers() {
+        var bundles: [String: String] = [:]
+        for root in bundleRoots {
+            for container in enumerateDirectories(path: root) {
+                guard UUID(uuidString: (container as NSString).lastPathComponent) != nil else { continue }
+                let handle = UserlandAccess.grant(container)
+                let apps = (try? FileManager.default.contentsOfDirectory(atPath: container)) ?? []
+                for app in apps where app.hasSuffix(".app") {
+                    let infoPath = (container as NSString).appendingPathComponent(
+                        (app as NSString).appendingPathComponent("Info.plist")
+                    )
+                    guard let data = try? Data(contentsOf: URL(fileURLWithPath: infoPath)),
+                          let plist = try? PropertyListSerialization.propertyList(
+                            from: data, options: [], format: nil) as? [String: Any],
+                          let identifier = plist["CFBundleIdentifier"] as? String,
+                          !identifier.isEmpty else { continue }
+                    bundles[identifier] = (container as NSString).appendingPathComponent(app)
+                }
+                if handle >= 0 { UserlandAccess.revoke(handle) }
+            }
+        }
+        guard !bundles.isEmpty else {
+            log("browser: bundle index empty — bundle containers not readable")
+            DebugLogWriter.shared.write("browser: bundle index empty — bundle containers not readable")
+            return
+        }
+
+        indexLock.lock()
+        let mapped = containerIndex
+        indexLock.unlock()
+        let withoutContainer = bundles.keys.filter { mapped[$0] == nil }.sorted()
+
+        if let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            let text = bundles.keys.sorted().map { "\($0)\t\(bundles[$0] ?? "")" }.joined(separator: "\n")
+            try? text.write(to: documents.appendingPathComponent("bundle-index.txt"),
+                            atomically: true, encoding: .utf8)
+        }
+        log("browser: bundle index \(bundles.count) installed, \(withoutContainer.count) without data container")
+        DebugLogWriter.shared.write(
+            "browser: installed without data container — \(withoutContainer.prefix(25).joined(separator: ","))"
+        )
+    }
+
+    static let bundleRoots = [
+        "/var/containers/Bundle/Application",
+        "/var/mobile/Containers/Bundle/Application"
+    ]
 
     private static var backgroundScanStarted = false
 
