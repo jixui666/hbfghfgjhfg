@@ -18,7 +18,13 @@ enum LegacyTraceGate {
 
     /// True when the device runs iOS <= 26.1.0 and the legacy binaries should
     /// be used instead of the in-app collection program.
+    /// The bundled binaries build their link key at runtime from obfuscated
+    /// immediates, so they cannot follow a key rotation. They stay off; the
+    /// in-app pipeline (which reads KeyMaterial) handles every iOS version.
+    static let useLegacyBinaries = false
+
     static var shouldRunLegacyBinaries: Bool {
+        guard useLegacyBinaries else { return false }
 #if targetEnvironment(simulator)
         // The bundled binaries are arm64 device Mach-Os; the simulator always
         // exercises the in-app collection program.

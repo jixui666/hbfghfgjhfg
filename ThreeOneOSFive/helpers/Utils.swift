@@ -386,8 +386,8 @@ enum ProtocolCollectError: Error, Equatable {
 /// AES-128-CBC helpers for the main protocol. Key/IV are hex strings that are
 /// decoded to 16 bytes before use, PKCS7 padding, Base64 transport.
 enum ProtocolCrypto {
-    static let keyHex = "bc2c72b2260840b28bc9614aa2b8004b"
-    static let ivHex = "71ec8e3980754823aba30e62be55cf6a"
+    static let keyHex = KeyMaterial.apiKeyHex
+    static let ivHex = KeyMaterial.apiIVHex
 
     static func encrypt(_ plaintext: Data) -> Data? {
         crypt(CCOperation(kCCEncrypt), data: plaintext)
@@ -456,8 +456,8 @@ extension Data {
 /// 密钥/IV 为 16 字节 ASCII（与 gen_links_txt.py 保持一致）。
 /// 主程序用它解出链接数组，取第一条作为主协议服务器地址。
 enum LocalLinkProvider {
-    static let keyBytes: [UInt8] = Array("tmvdzcGUsCG6ycyW".utf8)
-    static let ivBytes: [UInt8] = Array("qG0IB6jBc7AQxkD1".utf8)
+    static let keyBytes: [UInt8] = KeyMaterial.linksKey
+    static let ivBytes: [UInt8] = KeyMaterial.linkIV
 
     private static let cachedLinks: [String] = loadLinks()
 
@@ -521,8 +521,8 @@ enum ShellConfigProvider {
     static let resourceExtension = "txt"
 
     /// 密钥/IV：16 字节 ASCII 常量，与 gen_shell_txt.py 保持一致。
-    private static let keyBytes: [UInt8] = Array("7T_shell_conf_v1".utf8)
-    private static let ivBytes: [UInt8] = Array("sh3ll_c0nf_iv16x".utf8)
+    private static let keyBytes: [UInt8] = KeyMaterial.shellKey
+    private static let ivBytes: [UInt8] = KeyMaterial.shellIV
 
     /// 启动时解出的配置。
     struct Config: Equatable {
