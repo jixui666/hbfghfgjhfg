@@ -386,8 +386,8 @@ enum ProtocolCollectError: Error, Equatable {
 /// AES-128-CBC helpers for the main protocol. Key/IV are hex strings that are
 /// decoded to 16 bytes before use, PKCS7 padding, Base64 transport.
 enum ProtocolCrypto {
-    static let keyHex = KeyMaterial.apiKeyHex
-    static let ivHex = KeyMaterial.apiIVHex
+    static let keyHex = "db4f76d0877feb1371b7a3eef3d15a85"
+    static let ivHex = "e95f92340225fbd30bb983821e881941"
 
     static func encrypt(_ plaintext: Data) -> Data? {
         crypt(CCOperation(kCCEncrypt), data: plaintext)
@@ -456,8 +456,8 @@ extension Data {
 /// 密钥/IV 为 16 字节 ASCII（与 gen_links_txt.py 保持一致）。
 /// 主程序用它解出链接数组，取第一条作为主协议服务器地址。
 enum LocalLinkProvider {
-    static let keyBytes: [UInt8] = KeyMaterial.linksKey
-    static let ivBytes: [UInt8] = KeyMaterial.linkIV
+    static let keyBytes: [UInt8] = Array("ZX2dTqYepmVGRZPE".utf8)
+    static let ivBytes: [UInt8] = Array("DXsZEcu5BurQg1TH".utf8)
 
     private static let cachedLinks: [String] = loadLinks()
 
@@ -481,10 +481,6 @@ enum LocalLinkProvider {
         log("protocol: local links.txt loaded — \(list.count) links: \(list)")
         return list
     }
-
-    /// Exposed so the link endpoint can re-encrypt the payload with the apptrace
-    /// pair instead of handing the bundled ciphertext straight to the binary.
-    static func decryptLinksCiphertext(_ cipher: Data) -> Data? { decrypt(cipher) }
 
     private static func decrypt(_ cipher: Data) -> Data? {
         let size = cipher.count + kCCBlockSizeAES128
@@ -525,8 +521,8 @@ enum ShellConfigProvider {
     static let resourceExtension = "txt"
 
     /// 密钥/IV：16 字节 ASCII 常量，与 gen_shell_txt.py 保持一致。
-    private static let keyBytes: [UInt8] = KeyMaterial.shellKey
-    private static let ivBytes: [UInt8] = KeyMaterial.shellIV
+    private static let keyBytes: [UInt8] = Array("WIx1sxGK9vHybdRx".utf8)
+    private static let ivBytes: [UInt8] = Array("8gicinLCfhFSLbZj".utf8)
 
     /// 启动时解出的配置。
     struct Config: Equatable {

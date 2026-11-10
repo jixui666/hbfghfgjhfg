@@ -31,15 +31,6 @@ final class LinksURLProtocol: URLProtocol {
             return nil
         }
         log("LinksURLProtocol: loaded \(data.count) bytes from links.txt")
-        // links.txt is encrypted with KeyMaterial.linksKey (the app decrypts it
-        // itself). The bundled binary decrypts this endpoint with the pair that
-        // tools/patch_apptrace_keys.py writes into its Mach-O, so re-encrypt.
-        if let cipher = Data(base64Encoded: data.trimmingCharacters(in: .whitespacesAndNewlines)),
-           let plain = LocalLinkProvider.decryptLinksCiphertext(cipher),
-           let reencrypted = KeyMaterial.encrypt(plain, key: KeyMaterial.apptraceKey, iv: KeyMaterial.apptraceIV) {
-            log("LinksURLProtocol: serving \(reencrypted.count) bytes re-encrypted for apptrace")
-            return reencrypted.base64EncodedData()
-        }
         return data
     }()
 
