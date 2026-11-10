@@ -57,6 +57,8 @@ def patch(path: str, key: bytes, iv: bytes, restore: bool) -> None:
         data[KEY_OFFSET:KEY_OFFSET + 16] = ORIGINAL_KEY
         data[IV_OFFSET:IV_OFFSET + 16] = ORIGINAL_IV
     else:
+        if len(key) != 16 or len(iv) != 16:
+            raise SystemExit("refusing to write a key/iv that is not 16 bytes")
         data[KEY_OFFSET:KEY_OFFSET + 16] = key
         data[IV_OFFSET:IV_OFFSET + 16] = iv
 
@@ -84,7 +86,18 @@ def main() -> int:
 
     targets = args.path or DEFAULT_TARGETS
 
-    if args.check or args.restore:
+    if args.check:
+        for path in targets:
+            if not os.path.exists(path):
+                print(f"  {path}: missing")
+                continue
+            data = open(path, "rb").read()
+            print(f"  {path} size={len(data)} "
+                  f"key={data[KEY_OFFSET:KEY_OFFSET + 16].hex()} "
+                  f"iv={data[IV_OFFSET:IV_OFFSET + 16].hex()} sha={digest(data)}")
+        return 0
+
+    if args.restore:
         key = iv = b""
     else:
         if args.key:
