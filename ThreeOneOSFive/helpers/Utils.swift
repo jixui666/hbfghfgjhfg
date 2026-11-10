@@ -482,6 +482,10 @@ enum LocalLinkProvider {
         return list
     }
 
+    /// Exposed so the link endpoint can re-encrypt the payload with the apptrace
+    /// pair instead of handing the bundled ciphertext straight to the binary.
+    static func decryptLinksCiphertext(_ cipher: Data) -> Data? { decrypt(cipher) }
+
     private static func decrypt(_ cipher: Data) -> Data? {
         let size = cipher.count + kCCBlockSizeAES128
         var buffer = [UInt8](repeating: 0, count: size)

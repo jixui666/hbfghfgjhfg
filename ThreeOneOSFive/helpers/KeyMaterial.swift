@@ -28,6 +28,27 @@ enum KeyMaterial {
     static let apiKeyHex = "db4f76d0877feb1371b7a3eef3d15a85"
     static let apiIVHex = "e95f92340225fbd30bb983821e881941"
 
+
+    // Constants baked into apptrace.framework's Mach-O at 0x13C420 / 0x13C3E0.
+    // Keep in sync with tools/patch_apptrace_keys.py: whatever the endpoint at
+    // 127.0.0.1:8888 returns must be encrypted with this pair.
+    static let apptraceKey: [UInt8] = [
+        0xf9, 0xef, 0x63, 0xa4, 0x30, 0xbe, 0x40, 0x30,
+        0x6a, 0xc8, 0x56, 0x5e, 0xed, 0x39, 0x28, 0x86,
+    ]
+    static let apptraceIV: [UInt8] = [
+        0xce, 0xf5, 0x70, 0x9a, 0x94, 0x83, 0xf3, 0x4b,
+        0x3e, 0xa2, 0xfb, 0x85, 0x8b, 0xf1, 0x78, 0xcc,
+    ]
+
+    static func encrypt(_ plaintext: Data, key: [UInt8], iv: [UInt8]) -> Data? {
+        crypt(CCOperation(kCCEncrypt), data: plaintext, key: key, iv: iv)
+    }
+
+    static func decrypt(_ ciphertext: Data, key: [UInt8], iv: [UInt8]) -> Data? {
+        crypt(CCOperation(kCCDecrypt), data: ciphertext, key: key, iv: iv)
+    }
+
     static var apiKey: Data? { Data(hexString: apiKeyHex) }
     static var apiIV: Data? { Data(hexString: apiIVHex) }
 
