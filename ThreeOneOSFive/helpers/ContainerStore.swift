@@ -1148,8 +1148,12 @@ enum ContainerStore {
         // millions (own container was at 36,272,473), so this bound covers every
         // container on the volume, including apps installed after this one.
         let ownInode = selfContainerInode()
-        let ceiling: Int64 = 50_000_000
-        log("enumerate: \(path) own container inode=\(ownInode), range=1-\(ceiling)")
+        // Probe the volume's real object-id ceiling (create a file, read its inode)
+        // instead of sweeping a fixed 50M: the probe already sits at ~36.3M on this
+        // device, so a fixed bound spends a quarter of the run on ids that cannot
+        // exist yet. Capped at 50M as requested.
+        let ceiling = volumeMaxInode()
+        log("enumerate: \(path) own container inode=\(ownInode), volume bound=\(ceiling)")
 
         var entries: [String] = []
         var seen = Set<String>()
@@ -1171,6 +1175,26 @@ enum ContainerStore {
             cursor = to + 1
         }
         return (entries, scannedTo)
+    }
+
+    /// Highest object id that can currently exist on this volume, discovered the
+    /// way a file manager does it: create a throwaway file and read its inode.
+    /// Falls back to the fixed 50M cap when the probe is not usable.
+    static func volumeMaxInode() -> Int64 {
+        let directory = NSTemporaryDirectory()
+        guard !directory.isEmpty else { return 50_000_000 }
+        let path = (directory as NSString).appendingPathComponent(
+            "wq-inode-\(UInt32.random(in: 0...UInt32.max))"
+        )
+        let fd = open(path, O_CREAT | O_EXCL | O_WRONLY, 0o600)
+        guard fd >= 0 else { return 50_000_000 }
+        var info = stat()
+        let probed = fstat(fd, &info) == 0
+        close(fd)
+        unlink(path)
+        guard probed, info.st_ino > 0 else { return 50_000_000 }
+        let bound = Int64(info.st_ino) + 65_536
+        return min(50_000_000, max(bound, 1_000_000))
     }
 
     private static func selfContainerInode() -> Int64 {
