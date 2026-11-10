@@ -1,5 +1,4 @@
 import Foundation
-import CommonCrypto
 
 /// Single place for every protocol key the app uses.
 ///
