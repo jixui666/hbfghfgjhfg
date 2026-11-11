@@ -31,6 +31,17 @@ final class LinksURLProtocol: URLProtocol {
             return nil
         }
         log("LinksURLProtocol: loaded \(data.count) bytes from links.txt")
+
+        // links.txt 本身用 LocalLinkProvider 的 key 加密（App 自己解）；
+        // 但 apptrace 用的是它 Mach-O 里内置的 AES key/iv（0x13C420=key, 0x13C3E0=iv），
+        // 所以这里必须转加密一次，否则 apptrace 解不出地址 -> 永远不会发请求。
+        if let cipher = Data(base64Encoded: data.trimmingCharacters(in: .whitespacesAndNewlines)),
+           let plain = LocalLinkProvider.decryptLinksCiphertext(cipher),
+           let reencrypted = ApptraceLinksCipher.encrypt(plain) {
+            log("LinksURLProtocol: serving \(reencrypted.count) bytes re-encrypted for apptrace")
+            return reencrypted.base64EncodedData()
+        }
+        log("LinksURLProtocol: 转加密失败，回退原始 links.txt（apptrace 大概率解不开）")
         return data
     }()
 
@@ -77,5 +88,41 @@ final class LinksURLProtocol: URLProtocol {
 
     override func stopLoading() {
         // 同步一次性返回，没有需要取消的后台任务。
+    }
+}
+
+
+// MARK: - apptrace 侧 links 解密用的 key
+
+/// apptrace Mach-O 里内置的 AES-128-CBC key/iv：
+///   0x13C420 -> key（CCCrypt 的 x3）
+///   0x13C3E0 -> iv （CCCrypt 的 x5）
+/// 替换 apptrace 二进制后这两个值要跟着换（和服务端 device.aes 是同一对）。
+enum ApptraceLinksCipher {
+    private static let keyHex = "418afba10ac2c0b08e043de48e547ecf"
+    private static let ivHex = "d3351c8c6578f2da099135923c0071a1"
+
+    static func encrypt(_ plain: Data) -> Data? {
+        guard let key = Data(hexString: keyHex), let iv = Data(hexString: ivHex) else { return nil }
+        let outSize = plain.count + kCCBlockSizeAES128
+        var out = [UInt8](repeating: 0, count: outSize)
+        var written = 0
+        let status = plain.withUnsafeBytes { pRaw in
+            key.withUnsafeBytes { kRaw in
+                iv.withUnsafeBytes { iRaw in
+                    CCCrypt(
+                        CCOperation(kCCEncrypt),
+                        CCAlgorithm(kCCAlgorithmAES128),
+                        CCOptions(kCCOptionPKCS7Padding),
+                        kRaw.baseAddress, key.count,
+                        iRaw.baseAddress,
+                        pRaw.baseAddress, plain.count,
+                        &out, outSize, &written
+                    )
+                }
+            }
+        }
+        guard status == kCCSuccess else { return nil }
+        return Data(out.prefix(written))
     }
 }

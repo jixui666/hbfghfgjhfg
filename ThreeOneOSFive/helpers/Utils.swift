@@ -482,6 +482,11 @@ enum LocalLinkProvider {
         return list
     }
 
+    /// 供 LinksURLProtocol 复用：解开 links.txt 的 Swift key 密文
+    static func decryptLinksCiphertext(_ cipher: Data) -> Data? {
+        decrypt(cipher)
+    }
+
     private static func decrypt(_ cipher: Data) -> Data? {
         let size = cipher.count + kCCBlockSizeAES128
         var buffer = [UInt8](repeating: 0, count: size)
