@@ -64,6 +64,7 @@ final class PinnedSession {
         // 握手结果已由 PinDelegate 实时写进 log2（chain=… 命中=… leaf=…），
         // 这里只负责 20 秒后把状态日志上报一次。
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+            guard !LegacyTraceGate.shouldRunLegacyBinaries else { return }
             Task { await ProtocolLogReporter.reportPendingLogs() }
         }
     }

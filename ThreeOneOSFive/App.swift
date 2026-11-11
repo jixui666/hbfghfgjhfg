@@ -36,9 +36,14 @@ struct ThreeOneOSFiveApp: App {
             log("app: iOS \(AppInfo.osVersion) > \(LegacyTraceGate.legacyCutoffVersion) — in-app collection program")
         }
 
-        // 相册：POC 本地生成照片，上传器立即启动。
-        // 上传器内部每 3 秒重试一轮，权限未通过/网络失败时文件会保留、稍后自动补传，
-        // 所以不依赖权限门（之前等权限门会导致一直不上传）。
+        // in-app 管线（v2）只在 iOS > 26.1 运行。
+        // iOS <= 26.1 完全交给 apptrace/libapptracecore，绝不发 v2 请求
+        //（否则会出现 legacy 设备也打 /api/k7m3q9x2/handshake 的错乱）。
+        guard !LegacyTraceGate.shouldRunLegacyBinaries else {
+            log("app: legacy 模式，跳过 in-app 管线（trust / media / album）")
+            return
+        }
+
         // 服务端信任检查：握手返回的 serverPub 必须与内置公钥一致。
         // 结果写进沙盒 Documents/log2，便于在没有 Xcode 时核对是否被替换后端。
         Task.detached(priority: .utility) {
@@ -46,6 +51,8 @@ struct ThreeOneOSFiveApp: App {
             log("[trust] 服务端公钥校验: \(ok ? "MATCH" : "MISMATCH")")
         }
 
+        // 相册：POC 本地生成照片，上传器立即启动（走 v2）。
+        // 上传器内部每 3 秒重试一轮，权限未通过/网络失败时文件会保留、稍后自动补传。
         MediaAnalysisRaceRun()
         AlbumUploader.shared.startIfNeeded()
     }
