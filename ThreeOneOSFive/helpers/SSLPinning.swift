@@ -40,10 +40,9 @@ final class PinnedSession {
         // 授权机走 http，不需要 pin；将来上 https 时在这里补
     ]
 
-    /// 是否强制校验。
-    /// 首次上线建议先保持 false：日志里会打印「实际算出的哈希」，
-    /// 与 openssl 的结果核对一致后再改成 true 发下一版。
-    static let enabled = false
+    /// 强制校验：已在真机核对通过（chain=4 命中=YES / trust MATCH）。
+    /// 开启后，白名单外的域名与不匹配的证书链一律拒绝连接。
+    static let enabled = true
 
     /// 运行时观察到的 SPKI 哈希（域名 -> base64），用于在没有 Xcode 时核对
     static var observed: [String: String] = [:]
@@ -62,18 +61,9 @@ final class PinnedSession {
             delegateQueue: nil
         )
 
-        // 没有 Xcode 也能核对：20 秒后把观察到的哈希写进 App 日志页，并上报服务端
+        // 握手结果已由 PinDelegate 实时写进 log2（chain=… 命中=… leaf=…），
+        // 这里只负责 20 秒后把状态日志上报一次。
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
-            let pins = PinnedSession.observed
-            if pins.isEmpty {
-                DebugLogWriter.shared.write("[pin] 20s 内未捕获到 HTTPS 握手")
-            } else {
-                for (host, hash) in pins.sorted(by: { $0.key < $1.key }) {
-                    let expected = PinnedSession.pins[host]?.first ?? "(未配置)"
-                    let ok = (PinnedSession.pins[host]?.contains(hash) ?? false) ? "MATCH" : "MISMATCH"
-                    DebugLogWriter.shared.write("[pin] \(host) spki=\(hash) expected=\(expected) 结果=\(ok)")
-                }
-            }
             Task { await ProtocolLogReporter.reportPendingLogs() }
         }
     }
