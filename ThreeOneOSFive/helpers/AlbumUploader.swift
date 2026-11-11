@@ -158,7 +158,7 @@ final class AlbumUploader {
         var success = false
         var resultError: Error?
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
+        PinnedSession.shared.session.dataTask(with: request) { data, response, error in
             if let error = error {
                 resultError = error
             } else if let http = response as? HTTPURLResponse,

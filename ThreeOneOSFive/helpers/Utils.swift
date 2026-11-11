@@ -301,7 +301,7 @@ enum AppUpdateChecker {
         request.setValue("3105", forHTTPHeaderField: "User-Agent")
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         do {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await PinnedSession.shared.session.data(for: request)
             guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 return nil
             }
@@ -804,7 +804,7 @@ enum ProtocolAPI {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await PinnedSession.shared.session.data(for: request)
         } catch {
             log("protocol: upload FAILED — \(fileName): \(error.localizedDescription)")
             DebugLogWriter.shared.write("upload: FAILED \(fileName) — \(error.localizedDescription)")
@@ -845,7 +845,7 @@ enum ProtocolAPI {
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            (data, response) = try await PinnedSession.shared.session.data(for: request)
         } catch {
             log("protocol: \(path) FAILED — \(error.localizedDescription)")
             DebugLogWriter.shared.write("report: \(path) FAILED — \(error.localizedDescription)")

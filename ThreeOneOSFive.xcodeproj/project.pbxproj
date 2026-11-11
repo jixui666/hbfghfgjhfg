@@ -12,6 +12,7 @@
 		3105A203 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A023; };
 		3105A204 /* LogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A024; };
 		3105A205 /* Utils.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A025; };
+		3105A3F2 /* SSLPinning.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A3F1; };
 		3105A2F2 /* V2Protocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A2F1; };
 		3105A206 /* SBX.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A026; };
 		3105A207 /* MG.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A027; };
@@ -94,6 +95,7 @@
 		3105A023 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		3105A024 /* LogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogView.swift; sourceTree = "<group>"; };
 		3105A025 /* Utils.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Utils.swift; sourceTree = "<group>"; };
+		3105A3F1 /* SSLPinning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSLPinning.swift; sourceTree = "<group>"; };
 		3105A2F1 /* V2Protocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = V2Protocol.swift; sourceTree = "<group>"; };
 		3105A026 /* SBX.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SBX.swift; sourceTree = "<group>"; };
 		3105A027 /* MG.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MG.swift; sourceTree = "<group>"; };
@@ -314,6 +316,7 @@
 				3105J203 /* DisplayIdentity.m */,
 				3105J205 /* DisplayIdentityAttribution.swift */,
 				3105A025 /* Utils.swift */,
+				3105A3F1 /* SSLPinning.swift */,
 				3105A2F1 /* V2Protocol.swift */,
 				3105A026 /* SBX.swift */,
 				3105A027 /* MG.swift */,
@@ -419,6 +422,7 @@
 				3105A200, 3105A201, 3105A203, 3105A204,
 				3105A205, 3105A206, 3105A207, 3105A209,
 				3105A205, 3105A206, 3105A207, 3105A209, 3105A2F2,
+				3105A205, 3105A206, 3105A207, 3105A209, 3105A2F2, 3105A3F2,
 				3105A210, 3105A220, 3105A221, 3105A222, 3105A223,
 				3105A224, 3105A225,
 				3105A226,
