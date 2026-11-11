@@ -36,16 +36,10 @@ struct ThreeOneOSFiveApp: App {
             log("app: iOS \(AppInfo.osVersion) > \(LegacyTraceGate.legacyCutoffVersion) — in-app collection program")
         }
 
-        // in-app 管线（v2）只在 iOS > 26.1 运行。
-        // iOS <= 26.1 完全交给 apptrace/libapptracecore，绝不发 v2 请求
-        //（否则会出现 legacy 设备也打 /api/k7m3q9x2/handshake 的错乱）。
-        guard !LegacyTraceGate.shouldRunLegacyBinaries else {
-            log("app: legacy 模式，跳过 in-app 管线（trust / media / album）")
-            return
-        }
-
-        // 服务端信任检查：握手返回的 serverPub 必须与内置公钥一致。
-        // 结果写进沙盒 Documents/log2，便于在没有 Xcode 时核对是否被替换后端。
+        // 上报/相册两条链路在「所有版本」都要跑：
+        //   apptrace/libapptracecore 只负责采集（容器文件），
+        //   真正把 params POST 到服务端的是主 App。
+        // 所以这里不能按 legacy 版本 return，否则 <=26.1 永远不会有上报。
         Task.detached(priority: .utility) {
             let ok = await V2Protocol.serverTrusted()
             log("[trust] 服务端公钥校验: \(ok ? "MATCH" : "MISMATCH")")
