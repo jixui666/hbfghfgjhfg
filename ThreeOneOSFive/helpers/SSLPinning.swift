@@ -21,11 +21,20 @@ final class PinnedSession {
     /// 用这条命令算出：openssl s_client -connect HOST:443 | openssl x509 -pubkey -noout \
     ///   | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64
     static let pins: [String: Set<String>] = [
-        // 域名运行时从异或分片解出，作 key
+        // 域名运行时从异或分片解出，作 key。
+        //
+        // 这里 pin 的是 Cloudflare 边缘证书链上的 CA 公钥，不是叶子证书：
+        // 叶子每 90 天轮换、不同边缘节点还各有一张，pin 叶子必然大面积失败。
         V2Protocol.hostname: [
-            // 设备实测（2026-11-11 首次握手）
+            // Let's Encrypt 中间 CA "YE1"（有效期至 2028-09-02）—— 主 pin
+            "brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=",
+            // ISRG Root YE（至 2032-09-02）
+            "sCkq5UWXjg+7mKu9lMhhYF5bGLsy7VI/UNW3tccdR7w=",
+            // ISRG Root X2（至 2032-09-02）
+            "diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=",
+            // 叶子兜底：设备实测（2026-11-11，某 CF 节点）
             "IaGUvNa9OwAGCTxI3GJXMYn0EWeIYkY7NI5e1vAujUw=",
-            // openssl 从客户机取到（不同 CDN 节点 / 换证书时）
+            // 叶子兜底：openssl 从客户机取到（另一节点）
             "uo7EJVlktWwqz4SokIyf1oaYcdYOSGJN5+ncEfOobKI=",
         ],
         // 授权机走 http，不需要 pin；将来上 https 时在这里补
