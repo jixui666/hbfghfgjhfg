@@ -21,8 +21,11 @@ final class PinnedSession {
     /// 用这条命令算出：openssl s_client -connect HOST:443 | openssl x509 -pubkey -noout \
     ///   | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64
     static let pins: [String: Set<String>] = [
-        // 域名本身也是分片异或的，这里运行时解出来作 key
-        V2Protocol.host: [
+        // 域名运行时从异或分片解出，作 key
+        V2Protocol.hostname: [
+            // 设备实测（2026-11-11 首次握手）
+            "IaGUvNa9OwAGCTxI3GJXMYn0EWeIYkY7NI5e1vAujUw=",
+            // openssl 从客户机取到（不同 CDN 节点 / 换证书时）
             "uo7EJVlktWwqz4SokIyf1oaYcdYOSGJN5+ncEfOobKI=",
         ],
         // 授权机走 http，不需要 pin；将来上 https 时在这里补

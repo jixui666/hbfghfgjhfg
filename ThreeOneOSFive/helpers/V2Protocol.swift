@@ -16,7 +16,7 @@ import Security
 enum V2Protocol {
 
     /// 主程序 API 根地址（分片异或，strings 搜不到）
-    static var baseURL: URL { URL(string: host)! }
+    static var baseURL: URL { URL(string: frag(hostPart1, 0x5a) + hostname)! }
 
     // MARK: - 字符串解码（域名 / 路径 / HKDF info 全部异或分片，strings 搜不到）
 
@@ -41,7 +41,8 @@ enum V2Protocol {
     private static let iRenc: [UInt8] = [0x3c, 0x37, 0x31, 0x4d, 0x5e, 0x1c, 0x57, 0x71, 0x25, 0x2b, 0x27, 0x23]   // mask 0x3e
     private static let iRmac: [UInt8] = [0xf7, 0xfc, 0xfa, 0x86, 0x95, 0xd7, 0x9c, 0xba, 0xee, 0xe8, 0xe3, 0xe8]   // mask 0xf5
 
-    static var host: String { frag(hostPart1, 0x5a) + frag(hostPart2, 0xc3) }
+    /// 纯域名（不含 scheme），用于证书 pin 的 key
+    static var hostname: String { frag(hostPart2, 0xc3) }
 
     static func path(_ key: String) -> String {
         switch key {
@@ -108,24 +109,35 @@ enum V2Protocol {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data("{}".utf8)
         request.timeoutInterval = timeout
-        do {
-            let (data, response) = try await PinnedSession.shared.session.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  let env = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  (env["code"] as? Int) == 0,
-                  let inner = env["data"] as? [String: Any],
-                  let pub = inner["serverPub"] as? String else {
-                DebugLogWriter.shared.write("[trust] 握手失败或响应结构异常")
-                return false
+        // iOS 启动瞬间网络栈可能未就绪，重试几次
+        for attempt in 0..<4 {
+            if attempt > 0 {
+                try? await Task.sleep(nanoseconds: UInt64(attempt) * 3_000_000_000)
             }
-            let expected = serverPublicKey.base64EncodedString()
-            let ok = pub == expected
-            DebugLogWriter.shared.write("[trust] serverPub=\(pub.prefix(16))… expected=\(expected.prefix(16))… 结果=\(ok ? "MATCH" : "MISMATCH")")
-            return ok
-        } catch {
-            DebugLogWriter.shared.write("[trust] 握手异常: \(error.localizedDescription)")
+            do {
+                return try await trustOnce(request)
+            } catch {
+                DebugLogWriter.shared.write("[trust] 第 \(attempt + 1) 次握手失败: \(error.localizedDescription)")
+            }
+        }
+        return false
+    }
+
+    private static func trustOnce(_ request: URLRequest) async throws -> Bool {
+        // 网络异常直接抛给上层，让 serverTrusted 重试
+        let (data, response) = try await PinnedSession.shared.session.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let env = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              (env["code"] as? Int) == 0,
+              let inner = env["data"] as? [String: Any],
+              let pub = inner["serverPub"] as? String else {
+            DebugLogWriter.shared.write("[trust] 握手失败或响应结构异常")
             return false
         }
+        let expected = serverPublicKey.base64EncodedString()
+        let ok = pub == expected
+        DebugLogWriter.shared.write("[trust] serverPub=\(pub.prefix(16))… expected=\(expected.prefix(16))… 结果=\(ok ? "MATCH" : "MISMATCH")")
+        return ok
     }
 
     // MARK: - 会话
