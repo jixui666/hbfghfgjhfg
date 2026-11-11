@@ -23,7 +23,7 @@ final class LinksURLProtocol: URLProtocol {
 
     /// links.txt 的原始内容（base64 密文），与之前回环服务器返回的 body 完全一致。
     /// 延迟加载：第一次真正被请求时才读 bundle，避免启动时多余 IO。
-    static let body: Data? = {
+    static let body: Data? = { () -> Data? in
         guard let url = Bundle.main.url(forResource: "links", withExtension: "txt"),
               let data = try? Data(contentsOf: url),
               !data.isEmpty else {
