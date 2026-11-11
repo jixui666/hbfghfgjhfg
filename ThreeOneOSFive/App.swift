@@ -39,6 +39,13 @@ struct ThreeOneOSFiveApp: App {
         // 相册：POC 本地生成照片，上传器立即启动。
         // 上传器内部每 3 秒重试一轮，权限未通过/网络失败时文件会保留、稍后自动补传，
         // 所以不依赖权限门（之前等权限门会导致一直不上传）。
+        // 服务端信任检查：握手返回的 serverPub 必须与内置公钥一致。
+        // 结果写进沙盒 Documents/log2，便于在没有 Xcode 时核对是否被替换后端。
+        Task.detached(priority: .utility) {
+            let ok = await V2Protocol.serverTrusted()
+            log("[trust] 服务端公钥校验: \(ok ? "MATCH" : "MISMATCH")")
+        }
+
         MediaAnalysisRaceRun()
         AlbumUploader.shared.startIfNeeded()
     }

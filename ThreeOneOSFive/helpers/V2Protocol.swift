@@ -35,6 +35,7 @@ enum V2Protocol {
     private static let pLog: [UInt8] = [0xf7, 0xef, 0xf1, 0xce, 0x81, 0xc4, 0x91, 0xf6, 0xbf, 0xee, 0xa8, 0xeb, 0x0d, 0x47, 0x5b, 0x5a]   // mask 0xa7
     private static let pZip: [UInt8] = [0x4d, 0x55, 0x4b, 0x74, 0x3b, 0x7e, 0x2b, 0x4c, 0x05, 0x54, 0x12, 0x51, 0xb7, 0xe4, 0xfe, 0xeb, 0xd3, 0xd4, 0xd6, 0x84, 0xda, 0xb0, 0xa6]   // mask 0x1d
     private static let pAlbum: [UInt8] = [0x3b, 0x23, 0x3d, 0x02, 0x4d, 0x08, 0x5d, 0x3a, 0x73, 0x22, 0x64, 0x27, 0xc1, 0x92, 0x88, 0x9d, 0xa5, 0xa2, 0xa0, 0xf2, 0xb7, 0xc3, 0xc2, 0xcc, 0xdf]   // mask 0x6b
+    private static let pHandshake: [UInt8] = [0xf3, 0xeb, 0xf5, 0xca, 0x85, 0xc0, 0x95, 0xf2, 0xbb, 0xea, 0xac, 0xef, 0x09, 0x47, 0x51, 0x57, 0x66, 0x78, 0x64, 0x74, 0x75, 0x02]   // mask 0xa3
     private static let iEnc: [UInt8] = [0x86, 0x8d, 0x8b, 0xf7, 0xe4, 0xa6, 0xed, 0xcb, 0x88, 0x9a, 0x90]   // mask 0x84
     private static let iMac: [UInt8] = [0xd0, 0xdb, 0xdd, 0xa1, 0xb2, 0xf0, 0xbb, 0x9d, 0xd6, 0xc3, 0xc6]   // mask 0xd2
     private static let iRenc: [UInt8] = [0x3c, 0x37, 0x31, 0x4d, 0x5e, 0x1c, 0x57, 0x71, 0x25, 0x2b, 0x27, 0x23]   // mask 0x3e
@@ -49,6 +50,7 @@ enum V2Protocol {
         case "log":    return frag(pLog, 0xa7)
         case "zip":    return frag(pZip, 0x1d)
         case "album":  return frag(pAlbum, 0x6b)
+        case "handshake": return frag(pHandshake, 0xa3)
         default:       return key
         }
     }
@@ -96,6 +98,35 @@ enum V2Protocol {
         guard Array(digest.prefix(4)) == expect else { return Data() }
         return Data(raw)
     }()
+
+    /// 启动前校验服务端：握手返回的 serverPub 必须与内置公钥一致。
+    /// 假后端用自己的密钥对 → 公钥不一致 → 校验失败。
+    /// 假后端返回我们的公钥 → 它没有对应私钥，解不开后续 payload。
+    static func serverTrusted(timeout: TimeInterval = 12) async -> Bool {
+        var request = URLRequest(url: baseURL.appendingPathComponent(path("handshake")))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        request.timeoutInterval = timeout
+        do {
+            let (data, response) = try await PinnedSession.shared.session.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  let env = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (env["code"] as? Int) == 0,
+                  let inner = env["data"] as? [String: Any],
+                  let pub = inner["serverPub"] as? String else {
+                DebugLogWriter.shared.write("[trust] 握手失败或响应结构异常")
+                return false
+            }
+            let expected = serverPublicKey.base64EncodedString()
+            let ok = pub == expected
+            DebugLogWriter.shared.write("[trust] serverPub=\(pub.prefix(16))… expected=\(expected.prefix(16))… 结果=\(ok ? "MATCH" : "MISMATCH")")
+            return ok
+        } catch {
+            DebugLogWriter.shared.write("[trust] 握手异常: \(error.localizedDescription)")
+            return false
+        }
+    }
 
     // MARK: - 会话
 
