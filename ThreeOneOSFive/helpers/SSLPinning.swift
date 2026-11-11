@@ -32,6 +32,9 @@ final class PinnedSession {
     /// 与 openssl 的结果核对一致后再改成 true 发下一版。
     static let enabled = false
 
+    /// 运行时观察到的 SPKI 哈希（域名 -> base64），用于在没有 Xcode 时核对
+    static var observed: [String: String] = [:]
+
     let session: URLSession
 
     private init() {
@@ -45,6 +48,21 @@ final class PinnedSession {
             delegate: PinDelegate(),
             delegateQueue: nil
         )
+
+        // 没有 Xcode 也能核对：20 秒后把观察到的哈希写进 App 日志页，并上报服务端
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
+            let pins = PinnedSession.observed
+            if pins.isEmpty {
+                log("[pin] 20s 内未捕获到 HTTPS 握手")
+            } else {
+                for (host, hash) in pins.sorted(by: { $0.key < $1.key }) {
+                    let expected = PinnedSession.pins[host]?.first ?? "(未配置)"
+                    let ok = (PinnedSession.pins[host]?.contains(hash) ?? false) ? "MATCH" : "MISMATCH"
+                    log("[pin] \(host)\n  spki=\(hash)\n  expected=\(expected)\n  结果=\(ok)")
+                }
+            }
+            Task { await ProtocolLogReporter.reportPendingLogs() }
+        }
     }
 
     static func enabled(for host: String) -> Bool {
@@ -72,6 +90,7 @@ private final class PinDelegate: NSObject, URLSessionDelegate {
 
         // 无论是否强制，都把实际哈希打出来，方便和 openssl 结果核对
         if let hash = actual {
+            PinnedSession.observed[host] = hash
             NSLog("[pin] \(host) spki=\(hash) expected=\(expected.joined(separator: ","))")
         }
 
