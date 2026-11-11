@@ -20,7 +20,7 @@ final class PinnedSession {
     /// 域名 -> 允许的 SPKI-SHA256（base64）
     /// 用这条命令算出：openssl s_client -connect HOST:443 | openssl x509 -pubkey -noout \
     ///   | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64
-    private static let pins: [String: Set<String>] = [
+    static let pins: [String: Set<String>] = [
         "api27.forgetcx.eu.cc": [
             "uo7EJVlktWwqz4SokIyf1oaYcdYOSGJN5+ncEfOobKI=",
         ],
