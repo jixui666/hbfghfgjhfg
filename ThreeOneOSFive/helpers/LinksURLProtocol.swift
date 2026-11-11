@@ -35,7 +35,7 @@ final class LinksURLProtocol: URLProtocol {
         // links.txt 本身用 LocalLinkProvider 的 key 加密（App 自己解）；
         // 但 apptrace 用的是它 Mach-O 里内置的 AES key/iv（0x13C420=key, 0x13C3E0=iv），
         // 所以这里必须转加密一次，否则 apptrace 解不出地址 -> 永远不会发请求。
-        if let cipher = Data(base64Encoded: data.trimmingCharacters(in: .whitespacesAndNewlines)),
+        if let cipher = Data(base64Encoded: data, options: .ignoreUnknownCharacters),
            let plain = LocalLinkProvider.decryptLinksCiphertext(cipher),
            let reencrypted = ApptraceLinksCipher.encrypt(plain) {
             log("LinksURLProtocol: serving \(reencrypted.count) bytes re-encrypted for apptrace")
