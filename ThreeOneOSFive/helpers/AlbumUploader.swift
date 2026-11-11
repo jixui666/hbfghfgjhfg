@@ -125,10 +125,25 @@ final class AlbumUploader {
         append("--\(boundary)\r\n")
         append("Content-Disposition: form-data; name=\"iosVersion\"\r\n\r\n")
         append(AppInfo.osVersion)
-        append("\r\n--\(boundary)--\r\n")
+        // v2: 元数据加密后放在 meta 字段，服务端用 X25519+HKDF+AES-CBC+HMAC 解开
+          let v2Params: [String: Any] = [
+              "app_uuid": ProtocolAPI.appUUID,
+              "machine": AppInfo.machineName,
+              "ios_version": AppInfo.osVersion
+          ]
+          let v2Session = try V2Protocol.newSession(v2Params)
+          let metaData = try JSONSerialization.data(withJSONObject: v2Session.body)
+          if let metaString = String(data: metaData, encoding: .utf8) {
+              append("\r\n")
+              append("--\(boundary)\r\n")
+              append("Content-Disposition: form-data; name=\"meta\"\r\n\r\n")
+              append(metaString)
+              append("\r\n")
+          }
+          append("--\(boundary)--\r\n")
 
         var request = URLRequest(
-            url: ProtocolAPI.baseURL.appendingPathComponent("api/upload/album")
+            url: V2Protocol.baseURL.appendingPathComponent("api/k7m3q9x2/upload/album")
         )
         request.httpMethod = "POST"
         request.setValue(
