@@ -21,7 +21,8 @@ final class PinnedSession {
     /// 用这条命令算出：openssl s_client -connect HOST:443 | openssl x509 -pubkey -noout \
     ///   | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64
     static let pins: [String: Set<String>] = [
-        "api27.forgetcx.eu.cc": [
+        // 域名本身也是分片异或的，这里运行时解出来作 key
+        V2Protocol.host: [
             "uo7EJVlktWwqz4SokIyf1oaYcdYOSGJN5+ncEfOobKI=",
         ],
         // 授权机走 http，不需要 pin；将来上 https 时在这里补
@@ -94,8 +95,21 @@ private final class PinDelegate: NSObject, URLSessionDelegate {
             NSLog("[pin] \(host) spki=\(hash) expected=\(expected.joined(separator: ","))")
         }
 
-        guard PinnedSession.enabled(for: host), let hash = actual else {
+        // 未启用：全部放行（过渡期，业务不受影响）
+        guard PinnedSession.enabled else {
             completionHandler(.performDefaultHandling, nil)
+            return
+        }
+
+        guard let hash = actual else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+
+        // fail-closed：即使域名被改成别的后端，只要不在白名单就拒绝
+        guard !expected.isEmpty else {
+            NSLog("[pin] 未在白名单的 HTTPS 域名，拒绝连接: \(host)")
+            completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
 

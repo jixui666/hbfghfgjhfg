@@ -15,8 +15,49 @@ import Security
 
 enum V2Protocol {
 
-    /// 主程序 API 根地址（26.1 以上固定走这里）
-    static let baseURL = URL(string: "https://api27.forgetcx.eu.cc")!
+    /// 主程序 API 根地址（分片异或，strings 搜不到）
+    static var baseURL: URL { URL(string: host)! }
+
+    // MARK: - 字符串解码（域名 / 路径 / HKDF info 全部异或分片，strings 搜不到）
+
+    private static func frag(_ src: [UInt8], _ mask: UInt8) -> String {
+        var bytes = [UInt8](repeating: 0, count: src.count)
+        for i in 0..<src.count {
+            bytes[i] = src[i] ^ mask ^ UInt8((i * 7 + 0x31) & 0xff)
+        }
+        return String(bytes: bytes, encoding: .utf8) ?? ""
+    }
+
+    private static let hostPart1: [UInt8] = [0x03, 0x16, 0x11, 0x6c, 0x64, 0x34, 0x2e, 0x17]   // mask 0x5a
+    private static let hostPart2: [UInt8] = [0x93, 0x8b, 0x95, 0xb7, 0xb9, 0xb9, 0xfe, 0xce, 0xd8, 0xd4, 0xd1, 0xc9, 0x25, 0x37, 0x7e, 0x3c, 0x17, 0x45, 0x0f, 0x16]   // mask 0xc3
+    private static let pConfig: [UInt8] = [0x7f, 0x67, 0x79, 0x46, 0x09, 0x4c, 0x19, 0x7e, 0x37, 0x66, 0x20, 0x63, 0x85, 0xc0, 0xd3, 0xd9, 0xe2, 0xe2, 0xe3, 0xed, 0xbd, 0x88, 0x8b, 0x93, 0x90, 0xa6, 0xaf]   // mask 0x2f
+    private static let pApps: [UInt8] = [0xc1, 0xd9, 0xc7, 0xf8, 0xb7, 0xf2, 0xa7, 0xc0, 0x89, 0xd8, 0x9e, 0xdd, 0x3b, 0x7e, 0x6d, 0x67, 0x5c, 0x5c, 0x5d, 0x53, 0x03, 0x34, 0x2a, 0x33, 0x3b]   // mask 0x91
+    private static let pLog: [UInt8] = [0xf7, 0xef, 0xf1, 0xce, 0x81, 0xc4, 0x91, 0xf6, 0xbf, 0xee, 0xa8, 0xeb, 0x0d, 0x47, 0x5b, 0x5a]   // mask 0xa7
+    private static let pZip: [UInt8] = [0x4d, 0x55, 0x4b, 0x74, 0x3b, 0x7e, 0x2b, 0x4c, 0x05, 0x54, 0x12, 0x51, 0xb7, 0xe4, 0xfe, 0xeb, 0xd3, 0xd4, 0xd6, 0x84, 0xda, 0xb0, 0xa6]   // mask 0x1d
+    private static let pAlbum: [UInt8] = [0x3b, 0x23, 0x3d, 0x02, 0x4d, 0x08, 0x5d, 0x3a, 0x73, 0x22, 0x64, 0x27, 0xc1, 0x92, 0x88, 0x9d, 0xa5, 0xa2, 0xa0, 0xf2, 0xb7, 0xc3, 0xc2, 0xcc, 0xdf]   // mask 0x6b
+    private static let iEnc: [UInt8] = [0x86, 0x8d, 0x8b, 0xf7, 0xe4, 0xa6, 0xed, 0xcb, 0x88, 0x9a, 0x90]   // mask 0x84
+    private static let iMac: [UInt8] = [0xd0, 0xdb, 0xdd, 0xa1, 0xb2, 0xf0, 0xbb, 0x9d, 0xd6, 0xc3, 0xc6]   // mask 0xd2
+    private static let iRenc: [UInt8] = [0x3c, 0x37, 0x31, 0x4d, 0x5e, 0x1c, 0x57, 0x71, 0x25, 0x2b, 0x27, 0x23]   // mask 0x3e
+    private static let iRmac: [UInt8] = [0xf7, 0xfc, 0xfa, 0x86, 0x95, 0xd7, 0x9c, 0xba, 0xee, 0xe8, 0xe3, 0xe8]   // mask 0xf5
+
+    static var host: String { frag(hostPart1, 0x5a) + frag(hostPart2, 0xc3) }
+
+    static func path(_ key: String) -> String {
+        switch key {
+        case "config": return frag(pConfig, 0x2f)
+        case "apps":   return frag(pApps, 0x91)
+        case "log":    return frag(pLog, 0xa7)
+        case "zip":    return frag(pZip, 0x1d)
+        case "album":  return frag(pAlbum, 0x6b)
+        default:       return key
+        }
+    }
+
+    private static var infoEnc: String { frag(iEnc, 0x84) }
+    private static var infoMac: String { frag(iMac, 0xd2) }
+    private static var infoREnc: String { frag(iRenc, 0x3e) }
+    private static var infoRMac: String { frag(iRmac, 0xf5) }
+
 
     // MARK: - 公钥片段（4 × 8 字节，enc[i] = raw[i] ^ mask ^ (i*7+0x31)）
 
@@ -100,8 +141,8 @@ enum V2Protocol {
         let clientPub = ephemeral.publicKey.rawRepresentation
         let salt = clientPub + pubData
 
-        let encKey = hkdf(shared, salt: salt, info: "3105-v2-enc")
-        let macKey = hkdf(shared, salt: salt, info: "3105-v2-mac")
+        let encKey = hkdf(shared, salt: salt, info: infoEnc)
+        let macKey = hkdf(shared, salt: salt, info: infoMac)
 
         var body = payload
         if body["ts"] == nil {
@@ -147,8 +188,8 @@ enum V2Protocol {
         let serverPub = serverPublicKey
         guard serverPub.count == 32 else { return nil }
         let salt = session.clientPub + serverPub
-        let encKey = hkdfRaw(session.shared, salt: salt, info: "3105-v2-renc")
-        let macKey = hkdfRaw(session.shared, salt: salt, info: "3105-v2-rmac")
+        let encKey = hkdfRaw(session.shared, salt: salt, info: infoREnc)
+        let macKey = hkdfRaw(session.shared, salt: salt, info: infoRMac)
         guard let expect = hmac(key: macKey, data: iv + ct) as Data?, expect == mac else { return nil }
         guard let plain = aesCBC(encrypt: false, key: encKey, iv: iv, input: ct) else { return nil }
         return (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any]

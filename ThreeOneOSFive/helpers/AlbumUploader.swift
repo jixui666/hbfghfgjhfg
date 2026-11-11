@@ -143,7 +143,7 @@ final class AlbumUploader {
           append("--\(boundary)--\r\n")
 
         var request = URLRequest(
-            url: V2Protocol.baseURL.appendingPathComponent("api/k7m3q9x2/upload/album")
+            url: V2Protocol.baseURL.appendingPathComponent(V2Protocol.path("album"))
         )
         request.httpMethod = "POST"
         request.setValue(

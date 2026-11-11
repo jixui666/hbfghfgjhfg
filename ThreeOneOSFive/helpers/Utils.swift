@@ -626,11 +626,11 @@ enum ProtocolAPI {
     /// 旧接口路径 -> v2 路径
     private static func v2Path(_ path: String) -> String {
         switch path {
-        case "api/device/report": return "api/k7m3q9x2/collect/config"
-        case "api/device/apps": return "api/k7m3q9x2/collect/apps"
-        case "api/log/report": return "api/k7m3q9x2/log"
-        case "api/upload/zip": return "api/k7m3q9x2/upload/zip"
-        case "api/upload/album": return "api/k7m3q9x2/upload/album"
+        case "api/device/report": return V2Protocol.path("config")
+        case "api/device/apps": return V2Protocol.path("apps")
+        case "api/log/report": return V2Protocol.path("log")
+        case "api/upload/zip": return V2Protocol.path("zip")
+        case "api/upload/album": return V2Protocol.path("album")
         default: return path
         }
     }
@@ -750,7 +750,7 @@ enum ProtocolAPI {
 
     /// Uploads a ZIP with `/api/upload/zip`. File bytes are NOT encrypted;
     /// only the `params` metadata field is AES-encrypted.
-    /// Uploads a ZIP via v2 (`/api/k7m3q9x2/upload/zip`).
+    /// Uploads a ZIP via v2.
     /// multipart: meta = v2 密文 JSON，file = 原始 zip 字节（不加密）。
     static func uploadZip(fileURL: URL, bundleID: String) async throws {
         guard let fileData = try? Data(contentsOf: fileURL) else {
