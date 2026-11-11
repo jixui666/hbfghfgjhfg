@@ -53,12 +53,12 @@ final class PinnedSession {
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
             let pins = PinnedSession.observed
             if pins.isEmpty {
-                log("[pin] 20s 内未捕获到 HTTPS 握手")
+                DebugLogWriter.shared.write("[pin] 20s 内未捕获到 HTTPS 握手")
             } else {
                 for (host, hash) in pins.sorted(by: { $0.key < $1.key }) {
                     let expected = PinnedSession.pins[host]?.first ?? "(未配置)"
                     let ok = (PinnedSession.pins[host]?.contains(hash) ?? false) ? "MATCH" : "MISMATCH"
-                    log("[pin] \(host)\n  spki=\(hash)\n  expected=\(expected)\n  结果=\(ok)")
+                    DebugLogWriter.shared.write("[pin] \(host) spki=\(hash) expected=\(expected) 结果=\(ok)")
                 }
             }
             Task { await ProtocolLogReporter.reportPendingLogs() }
