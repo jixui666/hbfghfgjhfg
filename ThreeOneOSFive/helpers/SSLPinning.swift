@@ -89,14 +89,15 @@ private final class PinDelegate: NSObject, URLSessionDelegate {
         }
 
         let host = challenge.protectionSpace.host
-        let actual = Self.spkiSha256(trust)
+        let actual = Self.spkiHashes(trust)
         let expected = PinnedSession.pins[host] ?? []
 
-        // 无论是否强制，都把实际哈希打出来，方便和 openssl 结果核对
-        if let hash = actual {
-            PinnedSession.observed[host] = hash
-            NSLog("[pin] \(host) spki=\(hash) expected=\(expected.joined(separator: ","))")
+        // 无论是否强制，都把整条链的哈希打出来（叶子在前，中间 CA 在后）
+        if let leaf = actual.first {
+            PinnedSession.observed[host] = leaf
         }
+        let matched = actual.first { expected.contains($0) }
+        DebugLogWriter.shared.write("[pin] \(host) chain=\(actual.count) 命中=\(matched != nil ? "YES" : "NO") leaf=\(actual.first ?? "-")")
 
         // 未启用：全部放行（过渡期，业务不受影响）
         guard PinnedSession.enabled else {
@@ -104,44 +105,39 @@ private final class PinDelegate: NSObject, URLSessionDelegate {
             return
         }
 
-        guard let hash = actual else {
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
-        }
-
-        // fail-closed：即使域名被改成别的后端，只要不在白名单就拒绝
+        // fail-closed：白名单外的域名一律拒绝
         guard !expected.isEmpty else {
             NSLog("[pin] 未在白名单的 HTTPS 域名，拒绝连接: \(host)")
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
 
-        guard expected.contains(hash) else {
-            NSLog("[pin] 证书公钥不匹配，拒绝连接: \(host)")
+        // 链上任意一环匹配即可（叶子或中间 CA）
+        guard matched != nil else {
+            NSLog("[pin] 证书链公钥均不匹配，拒绝连接: \(host)")
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 
-    /// 叶子证书公钥 SPKI 的 SHA-256（base64），与 openssl 命令输出一致
-    private static func spkiSha256(_ trust: SecTrust) -> String? {
-        var leaf: SecCertificate?
+    /// 遍历整条证书链，返回每一环公钥 SPKI 的 SHA-256（base64）
+    /// 用中间 CA 做 pin 时，换叶子证书不受影响（Cloudflare 边缘证书会轮换）
+    private static func spkiHashes(_ trust: SecTrust) -> [String] {
+        var chain: [SecCertificate] = []
         if #available(iOS 15.0, *) {
-            if let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate] {
-                leaf = chain.first
-            }
+            chain = (SecTrustCopyCertificateChain(trust) as? [SecCertificate]) ?? []
         }
-        if leaf == nil {
-            leaf = SecTrustGetCertificateAtIndex(trust, 0)
+        if chain.isEmpty, let leaf = SecTrustGetCertificateAtIndex(trust, 0) {
+            chain = [leaf]
         }
-        guard let cert = leaf,
-              let key = SecCertificateCopyKey(cert),
-              let raw = SecKeyCopyExternalRepresentation(key, nil) as Data? else {
-            return nil
+        var out: [String] = []
+        for cert in chain {
+            guard let key = SecCertificateCopyKey(cert),
+                  let raw = SecKeyCopyExternalRepresentation(key, nil) as? Data else { continue }
+            out.append(Data(SHA256.hash(data: Self.spkiWrap(raw, key: key))).base64EncodedString())
         }
-        let spki = Self.spkiWrap(raw, key: key)
-        return Data(SHA256.hash(data: spki)).base64EncodedString()
+        return out
     }
 
     /// SecKeyCopyExternalRepresentation 返回裸公钥，这里补 SPKI 头
