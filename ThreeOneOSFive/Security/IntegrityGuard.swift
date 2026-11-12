@@ -346,10 +346,11 @@ enum IntegrityGuard {
     /// 读 Mach-O 里 16 字节定长名字（segname / sectname）
     private static func machOName(_ data: Data, at offset: Int, length: Int = 16) -> String {
         guard offset >= 0, offset + length <= data.count else { return "" }
-        var bytes = [UInt8](repeating: 0, count: length)
-        _ = withUnsafeMutableBytes(of: &bytes) { raw in
-            data.copyBytes(to: raw, from: offset..<(offset + length))
-        }
+        // 注意：这里必须直接从 Data 切片转数组。
+        // 早先写成 withUnsafeMutableBytes(of: &array) —— 那拿到的是 Array 变量本身
+        // （8 字节指针）而不是元素存储区，往里写 16 字节会踩坏栈，返回地址变成垃圾
+        // （崩溃日志里 vmRegionInfo 是一个野地址就是这么来的）。
+        let bytes = [UInt8](data[offset..<(offset + length)])
         let trimmed = bytes.prefix(while: { $0 != 0 })
         return String(decoding: trimmed, as: UTF8.self)
     }
