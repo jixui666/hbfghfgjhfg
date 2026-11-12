@@ -188,8 +188,16 @@ enum IntegrityGuard {
 
     // MARK: - Bundle 全量校验
 
+    /// 主二进制不参与逐文件比对：它的 `__TEXT` 由 textDigest 单独校验，
+    /// 打包时也不会写进 manifest.files。这里必须显式跳过，否则会被
+    /// "清单外的 Mach-O" 这条规则判成注入。
+    private static var mainExecutableName: String {
+        Bundle.main.executableURL?.lastPathComponent ?? ""
+    }
+
     private static func verifyBundle(_ manifest: Manifest) -> Bool {
         trace("C0:bundle-begin")
+        let mainExe = mainExecutableName
         let root = Bundle.main.bundleURL
         trace("C1:root=\(root.path)")
         guard let enumerator = FileManager.default.enumerator(
@@ -202,29 +210,50 @@ enum IntegrityGuard {
         for case let url as URL in enumerator {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+                trace("C2:stat-fail=\(url.lastPathComponent)")
                 return false
             }
             if isDirectory.boolValue { continue }
             // iOS 上 Bundle.main.bundleURL 可能是 /var/...，而枚举返回 /private/var/...
             // （/var 是指向 /private/var 的符号链接）。按路径前缀比较会全部失败，
             // 所以统一 resolve 符号链接后再按 pathComponents 比。
-            guard let relative = relativePath(of: url, root: root) else { continue }
+            guard let relative = relativePath(of: url, root: root) else {
+                trace("C2:rel-nil=\(url.path)")
+                continue
+            }
             if isSkipped(relative, manifest.skip) { continue }
-            guard let hashed = hashFile(url) else { return false }
+            if relative == mainExe { continue }
+            guard let hashed = hashFile(url) else {
+                trace("C2:hash-fail=\(relative)")
+                return false
+            }
             actual[relative] = hashed
         }
+        trace("C3:actual=\(actual.count)")
 
         // 清单里每个文件都必须存在且哈希一致
         for expected in manifest.files {
-            guard let got = actual[expected.path] else { return false }
-            guard got.0 == expected.isMachO, got.1 == expected.hash else { return false }
+            guard let got = actual[expected.path] else {
+                trace("C4:missing=\(expected.path)")
+                return false
+            }
+            if got.0 != expected.isMachO || got.1 != expected.hash {
+                let gotTag = got.1.base64EncodedString().prefix(8)
+                let expTag = expected.hash.base64EncodedString().prefix(8)
+                trace("C5:mismatch=\(expected.path) kind=\(got.0)/\(expected.isMachO) got=\(gotTag) exp=\(expTag)")
+                return false
+            }
         }
         // 清单外多出来的文件：只拒绝可执行映像（注入 dylib / 替换二进制）。
         // 重签工具会往 app 里塞 _CodeSignature/、embedded.mobileprovision 等，
         // 这些已在 skip 里；其它非 Mach-O 杂物放行，否则正常重签也会被误杀。
         for (key, value) in actual where !manifest.files.contains(where: { $0.path == key }) {
-            if value.0 { return false }
+            if value.0 {
+                trace("C6:extra-macho=\(key)")
+                return false
+            }
         }
+        trace("C7:ok")
         return true
     }
 
@@ -239,9 +268,15 @@ enum IntegrityGuard {
     }
 
     private static func isSkipped(_ relative: String, _ skip: [String]) -> Bool {
-        for prefix in skip {
-            if relative == prefix { return true }
-            if prefix.hasSuffix("/") && relative.hasPrefix(prefix) { return true }
+        for rule in skip {
+            if relative == rule { return true }
+            // 目录规则（以 / 结尾）在任意层级生效：Frameworks/x.framework/_CodeSignature/…
+            if rule.hasSuffix("/") && relative.contains(rule) { return true }
+            // "Info.plist" 指所有层级的 Info.plist：重签工具会把主 app 和每个 framework
+            // 的 MinimumOSVersion 一起改，只豁免根目录那份是不够的。
+            if rule == "Info.plist" && (relative == rule || relative.hasSuffix("/" + rule)) {
+                return true
+            }
         }
         return false
     }

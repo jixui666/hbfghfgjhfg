@@ -154,6 +154,20 @@ def hash_bundle_file(path: str):
     return (False, sha256(data))
 
 
+def skipped(rel: str, skip) -> bool:
+    """必须与 IntegrityGuard.isSkipped 逐条一致，否则 manifest 与运行时判定对不上。"""
+    for rule in skip:
+        if rel == rule:
+            return True
+        # 目录规则在任意层级生效：Frameworks/x.framework/_CodeSignature/…
+        if rule.endswith("/") and rule in rel:
+            return True
+        # "Info.plist" 指所有层级的 Info.plist
+        if rule == "Info.plist" and (rel == rule or rel.endswith("/" + rule)):
+            return True
+    return False
+
+
 def iter_bundle(app: str, skip):
     root = os.path.abspath(app)
     out = []
@@ -162,7 +176,7 @@ def iter_bundle(app: str, skip):
         for name in sorted(files):
             full = os.path.join(base, name)
             rel = os.path.relpath(full, root).replace(os.sep, "/")
-            if any(rel == s or (s.endswith("/") and rel.startswith(s)) for s in skip):
+            if skipped(rel, skip):
                 continue
             out.append((rel, full))
     return out

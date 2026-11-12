@@ -64,11 +64,18 @@ struct ThreeOneOSFiveApp: App {
         let issues = IntegrityGuard.lastIssues
         guard !issues.isEmpty else { return }
         log("integrity: \(issues.joined(separator: ","))")
+        // 把 trace 尾部一起弹出来，省得再让人去翻文件
+        var tail = ""
+        if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+           let text = try? String(contentsOf: docs.appendingPathComponent("ig_trace.log"), encoding: .utf8) {
+            let lines = text.split(separator: "\n").map(String.init)
+            tail = "\n\n" + lines.suffix(6).joined(separator: "\n")
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             let alert = UIAlertController(
                 title: "完整性校验未通过",
-                message: issues.joined(separator: "\n")
-                    + "\n\n（诊断包不会退出，仅提示。原因同时写在 Documents/last_failure.txt）",
+                message: issues.joined(separator: "\n") + tail
+                    + "\n\n（诊断包不会退出，仅提示。原因同时写在 Documents/）",
                 preferredStyle: .alert
             )
             alert.addAction(UIAlertAction(title: "好", style: .default))
