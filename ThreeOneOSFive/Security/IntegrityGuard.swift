@@ -31,19 +31,22 @@ enum IntegrityGuard {
         #if DEBUG
         return
         #else
-        if isTraced() { die() }
+        // 反调试：命中就退出（这是真的在被分析）
+        if isTraced() { die("traced") }
         denyAttach()
-        if hasInjectedEnvironment() { die() }
-        if hasSuspiciousImage() { die() }
-        // 不再检查 getppid() != 1：某些重签/启动路径下父进程不是 launchd，
-        // 会误杀正常安装；调试器检测已由 P_TRACED + PT_DENY_ATTACH 覆盖。
 
-        guard let payload = integrityPayload(), payload.count > 12 else { die() }
-        guard let (json, signature) = split(payload) else { die() }
-        guard verifyManifest(json: json, signature: signature) else { die() }
-        guard let manifest = parseManifest(json) else { die() }
-        guard let text = textDigest(), text == manifest.textHash else { die() }
-        guard verifyBundle(manifest) else { die() }
+        // 下面两项误杀率太高（越狱机自带的 ellekit/libhooker、某些重签工具注入的
+        // 环境变量都会命中），只记录不拦截 —— 真正拦得住的是完整性校验。
+        if hasInjectedEnvironment() { note("env-injected") }
+        if hasSuspiciousImage() { note("suspicious-image") }
+
+        guard let payload = integrityPayload(), payload.count > 12 else { die("no-section") }
+        guard let (json, signature) = split(payload) else { die("bad-payload") }
+        guard verifyManifest(json: json, signature: signature) else { die("bad-signature") }
+        guard let manifest = parseManifest(json) else { die("bad-manifest") }
+        guard let text = textDigest() else { die("no-text") }
+        guard text == manifest.textHash else { die("text-hash") }
+        guard verifyBundle(manifest) else { die("bundle-hash") }
         #endif
     }
 
@@ -344,11 +347,32 @@ enum IntegrityGuard {
         return false
     }
 
-    // MARK: - 退出
+    // MARK: - 退出 / 诊断
 
-    private static func die() -> Never {
+    /// 静默退出，但先把原因写进沙盒 Documents/last_failure.txt。
+    /// 这个文件不会被 app 上传，也不会被打包进 ipa；装到手机上后用「文件」App
+    /// 或爱思助手就能看到，用来判断到底是哪一项没过。
+    private static func die(_ reason: String) -> Never {
+        note(reason, fatal: true)
         _exit(0)
         while true {}
+    }
+
+    private static func note(_ reason: String, fatal: Bool = false) {
+        NSLog("[IG] %@%@", reason, fatal ? " (fatal)" : "")
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+        let url = docs.appendingPathComponent("last_failure.txt")
+        let stamp = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(stamp)] \(fatal ? "FATAL" : "warn") \(reason)\n"
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(Data(line.utf8))
+            try? handle.close()
+        } else {
+            try? Data(line.utf8).write(to: url)
+        }
     }
 
     // MARK: - 内存中的段表
