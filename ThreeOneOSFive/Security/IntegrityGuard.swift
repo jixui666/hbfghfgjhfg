@@ -34,28 +34,20 @@ enum IntegrityGuard {
         #if DEBUG
         return
         #else
-        traceReset()
-        trace("A0:enter")
         denyAttach()
-        trace("A1:denyAttach")
 
         var issues: [String] = []
         if isTraced() { issues.append("traced") }
-        trace("A2:isTraced")
         // 这两项误杀率高（越狱机自带 ellekit/libhooker、重签工具注入的环境变量），
         // 只作为信息记录，不单独触发退出。
         if hasInjectedEnvironment() { issues.append("env-injected") }
-        trace("A3:env")
         if hasSuspiciousImage() { issues.append("suspicious-image") }
-        trace("A4:image")
         issues.append(contentsOf: integrityIssues())
 
         lastIssues = issues
         guard !issues.isEmpty else {
-            trace("A9:pass")
             return
         }
-        trace("A9:fail=" + issues.joined(separator: ","))
         note(issues.joined(separator: ","), fatal: true)
 
         #if INTEGRITY_SAFE_MODE
@@ -70,24 +62,16 @@ enum IntegrityGuard {
 
     /// 逐项检查完整性，返回失败原因（空数组 = 全部通过）
     private static func integrityIssues() -> [String] {
-        guard let payload = integrityPayload() else { trace("B0:no-section"); return ["no-section"] }
-        trace("B0:section=\(payload.count)")
+        guard let payload = integrityPayload() else { return ["no-section"] }
         guard payload.count > 12 else { return ["no-section"] }
-        guard let (json, signature) = split(payload) else { trace("B1:bad-payload"); return ["bad-payload"] }
-        trace("B1:json=\(json.count)")
+        guard let (json, signature) = split(payload) else { return ["bad-payload"] }
         guard verifyManifest(json: json, signature: signature) else {
-            trace("B2:bad-signature")
             return ["bad-signature"]
         }
-        trace("B2:signature-ok")
-        guard let manifest = parseManifest(json) else { trace("B3:bad-manifest"); return ["bad-manifest"] }
-        trace("B3:manifest=\(manifest.files.count)")
-        guard let text = textDigest() else { trace("B4:no-text"); return ["no-text"] }
-        trace("B4:text=\(text.count)")
-        guard text == manifest.textHash else { trace("B5:text-hash"); return ["text-hash"] }
-        trace("B5:text-ok")
-        guard verifyBundle(manifest) else { trace("B6:bundle-hash"); return ["bundle-hash"] }
-        trace("B6:bundle-ok")
+        guard let manifest = parseManifest(json) else { return ["bad-manifest"] }
+        guard let text = textDigest() else { return ["no-text"] }
+        guard text == manifest.textHash else { return ["text-hash"] }
+        guard verifyBundle(manifest) else { return ["bundle-hash"] }
         return []
     }
 
@@ -196,10 +180,8 @@ enum IntegrityGuard {
     }
 
     private static func verifyBundle(_ manifest: Manifest) -> Bool {
-        trace("C0:bundle-begin")
         let mainExe = mainExecutableName
         let root = Bundle.main.bundleURL
-        trace("C1:root=\(root.path)")
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.isRegularFileKey],
@@ -210,7 +192,6 @@ enum IntegrityGuard {
         for case let url as URL in enumerator {
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
-                trace("C2:stat-fail=\(url.lastPathComponent)")
                 return false
             }
             if isDirectory.boolValue { continue }
@@ -218,29 +199,24 @@ enum IntegrityGuard {
             // （/var 是指向 /private/var 的符号链接）。按路径前缀比较会全部失败，
             // 所以统一 resolve 符号链接后再按 pathComponents 比。
             guard let relative = relativePath(of: url, root: root) else {
-                trace("C2:rel-nil=\(url.path)")
                 continue
             }
             if isSkipped(relative, manifest.skip) { continue }
             if relative == mainExe { continue }
             guard let hashed = hashFile(url) else {
-                trace("C2:hash-fail=\(relative)")
                 return false
             }
             actual[relative] = hashed
         }
-        trace("C3:actual=\(actual.count)")
 
         // 清单里每个文件都必须存在且哈希一致
         for expected in manifest.files {
             guard let got = actual[expected.path] else {
-                trace("C4:missing=\(expected.path)")
                 return false
             }
             if got.0 != expected.isMachO || got.1 != expected.hash {
                 let gotTag = got.1.base64EncodedString().prefix(8)
                 let expTag = expected.hash.base64EncodedString().prefix(8)
-                trace("C5:mismatch=\(expected.path) kind=\(got.0)/\(expected.isMachO) got=\(gotTag) exp=\(expTag)")
                 return false
             }
         }
@@ -249,11 +225,9 @@ enum IntegrityGuard {
         // 这些已在 skip 里；其它非 Mach-O 杂物放行，否则正常重签也会被误杀。
         for (key, value) in actual where !manifest.files.contains(where: { $0.path == key }) {
             if value.0 {
-                trace("C6:extra-macho=\(key)")
                 return false
             }
         }
-        trace("C7:ok")
         return true
     }
 
@@ -437,58 +411,21 @@ enum IntegrityGuard {
         return false
     }
 
-    // MARK: - 退出 / 诊断
+    // MARK: - 退出
 
-    /// 静默退出，但先把原因写进沙盒 Documents/last_failure.txt。
-    /// 这个文件不会被 app 上传，也不会被打包进 ipa；装到手机上后用「文件」App
-    /// 或爱思助手就能看到，用来判断到底是哪一项没过。
+    /// 校验不过就静默退出：不落盘、不弹窗、不留可供分析的文件。
     private static func die(_ reason: String) -> Never {
         note(reason, fatal: true)
         _exit(0)
         while true {}
     }
 
+    /// 只写系统日志（设备上的 Console 可见，沙盒里不留任何文件）。
     private static func note(_ reason: String, fatal: Bool = false) {
         NSLog("[IG] %@%@", reason, fatal ? " (fatal)" : "")
-        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return
-        }
-        let url = docs.appendingPathComponent("last_failure.txt")
-        // 不用 DateFormatter：启动极早期初始化 Formatter 有额外依赖，这里只用时间戳数字。
-        let stamp = String(format: "%.3f", Date().timeIntervalSince1970)
-        let line = "[\(stamp)] \(fatal ? "FATAL" : "warn") \(reason)\n"
-        if let handle = try? FileHandle(forWritingTo: url) {
-            handle.seekToEndOfFile()
-            handle.write(Data(line.utf8))
-            try? handle.close()
-        } else {
-            try? Data(line.utf8).write(to: url)
-        }
     }
 
-    /// 逐步落盘。崩溃时文件里最后一行就是崩在那一步之前的那条。
-    /// 只写 Documents/ig_trace.log，不上传、不打包。
-    private static func trace(_ step: String) {
-        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return
-        }
-        let url = docs.appendingPathComponent("ig_trace.log")
-        guard let data = (step + "\n").data(using: .utf8) else { return }
-        if let handle = try? FileHandle(forWritingTo: url) {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            try? handle.close()
-        } else {
-            try? data.write(to: url)
-        }
-    }
 
-    private static func traceReset() {
-        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return
-        }
-        try? FileManager.default.removeItem(at: docs.appendingPathComponent("ig_trace.log"))
-    }
 
     // MARK: - 内存中的段表
 

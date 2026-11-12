@@ -87,21 +87,9 @@ enum SecureBox {
         return [UInt8](opened)
     }
 
-    /// 只在解密失败时写一行，落到 Documents/secrets_trace.log（同时写 stderr，CI 可见）
+    /// 调试输出只走 stderr（CI 里可见），不在沙盒里留文件。
     private static func trace(_ message: String) {
         FileHandle.standardError.write(Data(("[SecureBox] " + message + "\n").utf8))
-        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-            return
-        }
-        let url = docs.appendingPathComponent("secrets_trace.log")
-        guard let data = (message + "\n").data(using: .utf8) else { return }
-        if let handle = try? FileHandle(forWritingTo: url) {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            try? handle.close()
-        } else {
-            try? data.write(to: url)
-        }
     }
 
     /// 给 CI 的诊断：把一条 entry 的中间量打出来
