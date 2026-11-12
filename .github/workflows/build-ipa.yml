@@ -31,7 +31,14 @@ jobs:
 
       # ---------------------------------------------------------------- 加固: 机密
       - name: Python crypto deps
-        run: python3 -m pip install --user --quiet cryptography
+        run: |
+          # runner 上的 python3 是 externally-managed，--user 装会被 PEP 668 拦，
+          # 所以建一个 venv 并把它的 bin 前置到 PATH，后续 python3 都走这里。
+          python3 -m venv .venv
+          .venv/bin/pip install --quiet --upgrade pip
+          .venv/bin/pip install --quiet cryptography
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          .venv/bin/python -c "import cryptography; print('cryptography', cryptography.__version__)"
 
       - name: Restore integrity signing key
         env:
