@@ -35,7 +35,8 @@ enum IntegrityGuard {
         denyAttach()
         if hasInjectedEnvironment() { die() }
         if hasSuspiciousImage() { die() }
-        if getppid() != 1 { die() }
+        // 不再检查 getppid() != 1：某些重签/启动路径下父进程不是 launchd，
+        // 会误杀正常安装；调试器检测已由 P_TRACED + PT_DENY_ATTACH 覆盖。
 
         guard let payload = integrityPayload(), payload.count > 12 else { die() }
         guard let (json, signature) = split(payload) else { die() }
@@ -112,8 +113,15 @@ enum IntegrityGuard {
         guard let header = _dyld_get_image_header(0) else { return nil }
         let base = UnsafeRawPointer(header)
         guard let text = segments(header).first(where: { $0.name == "__TEXT" }) else { return nil }
-        guard text.filesize > 0, text.filesize < 512_000_000 else { return nil }
-        let data = Data(bytes: base, count: Int(text.filesize))
+        // 从 __text section 开始，跳过 mach header + load commands：
+        // 重签会在 load commands 里插 LC_CODE_SIGNATURE，那 16 KB 必然变化。
+        guard let textSection = text.sections.first(where: { $0.name == "__text" }) else { return nil }
+        guard textSection.addr >= text.vmaddr else { return nil }
+        let start = textSection.addr - text.vmaddr
+        guard start < text.filesize else { return nil }
+        let count = Int(text.filesize - start)
+        guard count > 0, count < 512_000_000 else { return nil }
+        let data = Data(bytes: base.advanced(by: Int(start)), count: count)
         return Data(SHA256.hash(data: data))
     }
 
@@ -164,10 +172,11 @@ enum IntegrityGuard {
             guard let got = actual[expected.path] else { return false }
             guard got.0 == expected.isMachO, got.1 == expected.hash else { return false }
         }
-        // 不允许清单之外多出任何文件（防止注入 dylib / 塞入额外资源）
-        guard actual.count == manifest.files.count else { return false }
-        for key in actual.keys {
-            if !manifest.files.contains(where: { $0.path == key }) { return false }
+        // 清单外多出来的文件：只拒绝可执行映像（注入 dylib / 替换二进制）。
+        // 重签工具会往 app 里塞 _CodeSignature/、embedded.mobileprovision 等，
+        // 这些已在 skip 里；其它非 Mach-O 杂物放行，否则正常重签也会被误杀。
+        for (key, value) in actual where !manifest.files.contains(where: { $0.path == key }) {
+            if value.0 { return false }
         }
         return true
     }
@@ -235,13 +244,39 @@ enum IntegrityGuard {
                 data.copyBytes(to: $0, from: cursor + 4..<cursor + 8)
             }
             if cmd == 0x19 && cursor + 72 <= limit {
-                var filesize: UInt64 = 0
-                _ = withUnsafeMutableBytes(of: &filesize) {
-                    data.copyBytes(to: $0, from: cursor + 48..<cursor + 56)
+                // LC_SEGMENT_64：只认 __TEXT，并且只从 __text section 开始算。
+                // 不能从文件 0 开始：codesign 重签必须往 load commands 里插
+                // LC_CODE_SIGNATURE，ncmds/sizeofcmds 会变，前 16 KB 就不同了。
+                let segname = machOName(data, at: cursor + 8)
+                if segname == "__TEXT" {
+                    var fileoff: UInt64 = 0
+                    var filesize: UInt64 = 0
+                    var nsects: UInt32 = 0
+                    _ = withUnsafeMutableBytes(of: &fileoff) {
+                        data.copyBytes(to: $0, from: cursor + 40..<cursor + 48)
+                    }
+                    _ = withUnsafeMutableBytes(of: &filesize) {
+                        data.copyBytes(to: $0, from: cursor + 48..<cursor + 56)
+                    }
+                    _ = withUnsafeMutableBytes(of: &nsects) {
+                        data.copyBytes(to: $0, from: cursor + 64..<cursor + 68)
+                    }
+                    var section = cursor + 72
+                    for _ in 0..<Int(nsects) {
+                        if machOName(data, at: section) == "__text" {
+                            var sectionOffset: UInt32 = 0
+                            _ = withUnsafeMutableBytes(of: &sectionOffset) {
+                                data.copyBytes(to: $0, from: section + 48..<section + 52)
+                            }
+                            let start = offset + Int(sectionOffset)
+                            let end = offset + Int(fileoff + filesize)
+                            guard start < end, end <= data.count else { return nil }
+                            return start..<end
+                        }
+                        section += 80
+                    }
+                    return nil
                 }
-                let size = Int(filesize)
-                guard size > 0, offset + size <= data.count else { return nil }
-                return offset..<(offset + size)
             }
             let step = Int(cmdsize)
             guard step > 0 else { return nil }
@@ -249,6 +284,17 @@ enum IntegrityGuard {
             remaining -= 1
         }
         return nil
+    }
+
+    /// 读 Mach-O 里 16 字节定长名字（segname / sectname）
+    private static func machOName(_ data: Data, at offset: Int, length: Int = 16) -> String {
+        guard offset >= 0, offset + length <= data.count else { return "" }
+        var bytes = [UInt8](repeating: 0, count: length)
+        _ = withUnsafeMutableBytes(of: &bytes) { raw in
+            data.copyBytes(to: raw, from: offset..<(offset + length))
+        }
+        let trimmed = bytes.prefix(while: { $0 != 0 })
+        return String(decoding: trimmed, as: UTF8.self)
     }
 
     // MARK: - 反调试 / 反注入

@@ -48,26 +48,43 @@ PROFILES = {"strict": STRICT_SKIP, "sideload": SIDELOAD_SKIP}
 
 # ---------------------------------------------------------------- mach-o
 
-def thin_text_size(data: bytes, offset: int = 0):
-    """返回 (text_fileoff, text_filesize)，offset 是 Mach-O 在文件里的起点。"""
-    if offset + 32 > len(data):
+def thin_text_range(data: bytes, base: int = 0):
+    """返回 (start, end)：只覆盖 __TEXT,__text 到 __TEXT 段尾。
+
+    不能从文件 0 开始算：codesign 重签时必须往 load commands 里插
+    LC_CODE_SIGNATURE，ncmds/sizeofcmds 会变，前 16 KB 就不同了 ——
+    那样任何重签过的包都会被判定为被篡改（实测过，会启动即退）。
+    __text section 之后（__cstring/__const/Swift 元数据）codesign 不会碰，
+    所以从这里开始是稳定的。
+    """
+    if base + 32 > len(data):
         return None
-    magic = struct.unpack_from("<I", data, offset)[0]
+    magic = struct.unpack_from("<I", data, base)[0]
     if magic != 0xFEEDFACF:
         return None
-    ncmds = struct.unpack_from("<I", data, offset + 16)[0]
-    sizeofcmds = struct.unpack_from("<I", data, offset + 20)[0]
-    cursor = offset + 32
-    limit = min(len(data), offset + 32 + sizeofcmds)
+    ncmds = struct.unpack_from("<I", data, base + 16)[0]
+    sizeofcmds = struct.unpack_from("<I", data, base + 20)[0]
+    cursor = base + 32
+    limit = min(len(data), base + 32 + sizeofcmds)
     for _ in range(ncmds):
         if cursor + 8 > limit:
             break
         cmd, cmdsize = struct.unpack_from("<II", data, cursor)
         if cmd == 0x19 and cursor + 72 <= limit:            # LC_SEGMENT_64
-            name = data[cursor + 8:cursor + 24].split(b"\0")[0]
+            segname = data[cursor + 8:cursor + 24].split(b"\0")[0]
             fileoff, filesize = struct.unpack_from("<QQ", data, cursor + 40)
-            if name == b"__TEXT":
-                return (fileoff, filesize)
+            nsects = struct.unpack_from("<I", data, cursor + 64)[0]
+            if segname == b"__TEXT":
+                sec = cursor + 72
+                for _ in range(nsects):
+                    sectname = data[sec:sec + 16].split(b"\0")[0]
+                    offset = struct.unpack_from("<I", data, sec + 48)[0]
+                    if sectname == b"__text":
+                        start = base + offset
+                        end = base + fileoff + filesize
+                        return (start, end) if start < end else None
+                    sec += 80
+                return None
         if cmdsize == 0:
             break
         cursor += cmdsize
@@ -75,20 +92,18 @@ def thin_text_size(data: bytes, offset: int = 0):
 
 
 def macho_text_range(data: bytes):
-    """对 FAT/thin 都返回 __TEXT 在文件中的字节区间。"""
+    """对 FAT/thin 都返回 __TEXT,__text 起始到 __TEXT 段尾的文件区间。"""
     if len(data) < 8:
         return None
     magic = struct.unpack_from("<I", data, 0)[0]
     if magic == 0xFEEDFACF:
-        hit = thin_text_size(data, 0)
-        return (hit[0], hit[0] + hit[1]) if hit else None
+        return thin_text_range(data, 0)
     if magic == 0xCAFEBABE:                                  # FAT, big endian
         count = struct.unpack_from(">I", data, 4)[0]
         if count == 0:
             return None
         off = struct.unpack_from(">I", data, 8 + 8)[0]
-        hit = thin_text_size(data, off)
-        return (hit[0], hit[0] + hit[1]) if hit else None
+        return thin_text_range(data, off)
     return None
 
 

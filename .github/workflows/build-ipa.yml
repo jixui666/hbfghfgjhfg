@@ -110,6 +110,16 @@ jobs:
           APP="build/Build/Products/Release-iphoneos/TRX.app"
           python3 tools/integrity_pack.py --app "$APP" --verify
 
+      - name: Resign compatibility test
+        run: |
+          # 回归：模拟 codesign 往 load commands 插 LC_CODE_SIGNATURE，
+          # 完整性校验必须仍然通过；改 __text 必须被抓到。
+          APP="build/Build/Products/Release-iphoneos/TRX.app"
+          python3 tools/selftest_resign.py --app "$APP" --profile strict
+          # selftest 会改动 app，重新打一份干净的清单再继续
+          python3 tools/integrity_pack.py --app "$APP" --profile strict
+          python3 tools/integrity_pack.py --app "$APP" --profile strict --verify
+
       - name: Self-test packer logic
         run: python3 tools/selftest_integrity.py
 
