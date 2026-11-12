@@ -110,8 +110,10 @@ jobs:
             exit 1
           }
           # 公钥必须在只读的 __TEXT 段：放在 __DATA 会被换掉，Ed25519 验签随之失效
-          otool -l "$APP/JSQ" | grep -B4 '__pubkey' | grep -q '__TEXT' || {
-            echo "ERROR: __TEXT,__pubkey section missing — check OTHER_LDFLAGS" >&2
+          # otool -l 里 "sectname __pubkey" 的下一行才是 "segname __TEXT"
+          otool -l "$APP/JSQ" | grep -A2 'sectname __pubkey' | grep -q 'segname __TEXT' || {
+            echo "ERROR: __TEXT,__pubkey section missing or in the wrong segment" >&2
+            otool -l "$APP/JSQ" | grep -B2 -A6 '__pubkey' >&2 || true
             exit 1
           }
 
