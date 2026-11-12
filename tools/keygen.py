@@ -21,8 +21,20 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 PUB = os.path.join(HERE, "integrity_pubkey.hex")
+# 公钥同时写到源码树里，供链接器用 -sectcreate __TEXT __pubkey 注入只读段。
+# 之所以不放 Swift 数组：static let [UInt8] 一定落在可写的 __DATA，
+# 攻击者换掉数组即可让 Ed25519 验签失效；__TEXT 段不在可写范围，且被 textHash 覆盖。
+PUB_BIN = os.path.join(ROOT, "ThreeOneOSFive", "Security", "pubkey.bin")
 KEY_DIR = os.path.join(os.path.expanduser("~"), ".3105")
 KEY = os.path.join(KEY_DIR, "integrity_ed25519.key")
+
+
+def write_pub(raw: bytes) -> None:
+    with open(PUB, "w") as fh:
+        fh.write(raw.hex())
+    os.makedirs(os.path.dirname(PUB_BIN), exist_ok=True)
+    with open(PUB_BIN, "wb") as fh:
+        fh.write(raw)
 
 
 def import_from_env() -> bool:
@@ -37,8 +49,7 @@ def import_from_env() -> bool:
     priv = serialization.load_pem_private_key(open(KEY, "rb").read(), password=None)
     pub_raw = priv.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    with open(PUB, "w") as fh:
-        fh.write(pub_raw.hex())
+    write_pub(pub_raw)
     print("imported private key from INTEGRITY_PRIVATE_KEY_PEM")
     print("public hex :", pub_raw.hex())
     return True
@@ -52,11 +63,11 @@ def main() -> int:
     if os.path.exists(KEY) and not force:
         print("private key already exists:", KEY)
         print("use --force to replace (all previously built ipa will stop validating)")
-        if not os.path.exists(PUB):
+        if not os.path.exists(PUB) or not os.path.exists(PUB_BIN):
             priv = serialization.load_pem_private_key(open(KEY, "rb").read(), password=None)
-            open(PUB, "w").write(priv.public_key().public_bytes(
-                serialization.Encoding.Raw, serialization.PublicFormat.Raw).hex())
-            print("recovered public key ->", PUB)
+            write_pub(priv.public_key().public_bytes(
+                serialization.Encoding.Raw, serialization.PublicFormat.Raw))
+            print("recovered public key ->", PUB, "and", PUB_BIN)
         return 0
 
     os.makedirs(KEY_DIR, exist_ok=True)
@@ -72,11 +83,10 @@ def main() -> int:
 
     pub_raw = priv.public_key().public_bytes(
         serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-    with open(PUB, "w") as fh:
-        fh.write(pub_raw.hex())
+    write_pub(pub_raw)
 
     print("private key :", KEY, "(chmod 600, keep it out of git)")
-    print("public key  :", PUB)
+    print("public key  :", PUB, "and", PUB_BIN)
     print("public hex  :", pub_raw.hex())
     print()
     print("next: python tools/gen_secrets.py   # 把公钥编进 GeneratedSecrets")

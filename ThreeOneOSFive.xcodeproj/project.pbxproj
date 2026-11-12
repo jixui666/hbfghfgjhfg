@@ -544,6 +544,10 @@
 					"__DATA",
 					"__integrity",
 					"$(SRCROOT)/ThreeOneOSFive/Security/integrity.section",
+					"-sectcreate",
+					"__TEXT",
+					"__pubkey",
+					"$(SRCROOT)/ThreeOneOSFive/Security/pubkey.bin",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.apple.mobile.MobileHouseArrest";
 				PRODUCT_NAME = JSQ;
@@ -589,6 +593,10 @@
 					"__DATA",
 					"__integrity",
 					"$(SRCROOT)/ThreeOneOSFive/Security/integrity.section",
+					"-sectcreate",
+					"__TEXT",
+					"__pubkey",
+					"$(SRCROOT)/ThreeOneOSFive/Security/pubkey.bin",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.apple.mobile.MobileHouseArrest";
 				PRODUCT_NAME = JSQ;

@@ -101,12 +101,33 @@ enum IntegrityGuard {
     }
 
     private static func verifyManifest(json: Data, signature: Data) -> Bool {
-        let raw = GeneratedSecrets.integrityPubKey
-        guard raw.count == 32 else { return false }
-        guard let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: Data(raw)) else {
+        // 公钥必须来自 __TEXT,__pubkey：只读、且被 textHash 覆盖。
+        // 不能用 Swift 的 static let [UInt8] —— 那一定落在可写的 __DATA 段，
+        // 攻击者换掉数组再用自己的私钥重签清单，Ed25519 这一层就被绕过了。
+        guard let raw = publicKeyFromSection(), raw.count == 32 else { return false }
+        guard let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: raw) else {
             return false
         }
         return publicKey.isValidSignature(signature, for: json)
+    }
+
+    /// 读链接器注入的 __TEXT,__pubkey（32 字节 Ed25519 公钥）
+    private static func publicKeyFromSection() -> Data? {
+        guard let header = _dyld_get_image_header(0) else { return nil }
+        let base = UnsafeRawPointer(header)
+        let all = segments(header)
+        guard let text = all.first(where: { $0.name == "__TEXT" }) else { return nil }
+        for segment in all where segment.name == "__TEXT" {
+            for section in segment.sections where section.name == "__pubkey" {
+                guard section.addr >= text.vmaddr else { continue }
+                let offset = section.addr - text.vmaddr
+                guard offset < UInt64(1 << 32) else { continue }
+                let pointer = base.advanced(by: Int(offset))
+                let data = Data(bytes: pointer, count: Int(section.size))
+                return data.count == 32 ? data : nil
+            }
+        }
+        return nil
     }
 
     private static func parseManifest(_ json: Data) -> Manifest? {
