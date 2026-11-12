@@ -27,27 +27,47 @@ enum IntegrityGuard {
 
     // MARK: - 入口
 
+    /// 记录下来的问题（safe 模式下会给 UI 弹窗；严格模式下写完就退出）
+    static private(set) var lastIssues: [String] = []
+
     static func install() {
         #if DEBUG
         return
         #else
-        // 反调试：命中就退出（这是真的在被分析）
-        if isTraced() { die("traced") }
         denyAttach()
 
-        // 下面两项误杀率太高（越狱机自带的 ellekit/libhooker、某些重签工具注入的
-        // 环境变量都会命中），只记录不拦截 —— 真正拦得住的是完整性校验。
-        if hasInjectedEnvironment() { note("env-injected") }
-        if hasSuspiciousImage() { note("suspicious-image") }
+        var issues: [String] = []
+        if isTraced() { issues.append("traced") }
+        // 这两项误杀率高（越狱机自带 ellekit/libhooker、重签工具注入的环境变量），
+        // 只作为信息记录，不单独触发退出。
+        if hasInjectedEnvironment() { issues.append("env-injected") }
+        if hasSuspiciousImage() { issues.append("suspicious-image") }
+        issues.append(contentsOf: integrityIssues())
 
-        guard let payload = integrityPayload(), payload.count > 12 else { die("no-section") }
-        guard let (json, signature) = split(payload) else { die("bad-payload") }
-        guard verifyManifest(json: json, signature: signature) else { die("bad-signature") }
-        guard let manifest = parseManifest(json) else { die("bad-manifest") }
-        guard let text = textDigest() else { die("no-text") }
-        guard text == manifest.textHash else { die("text-hash") }
-        guard verifyBundle(manifest) else { die("bundle-hash") }
+        lastIssues = issues
+        guard !issues.isEmpty else { return }
+        note(issues.joined(separator: ","), fatal: true)
+
+        #if INTEGRITY_SAFE_MODE
+        // 诊断包：把问题交给 UI 显示，不退出
+        return
+        #else
+        _exit(0)
+        while true {}
         #endif
+        #endif
+    }
+
+    /// 逐项检查完整性，返回失败原因（空数组 = 全部通过）
+    private static func integrityIssues() -> [String] {
+        guard let payload = integrityPayload(), payload.count > 12 else { return ["no-section"] }
+        guard let (json, signature) = split(payload) else { return ["bad-payload"] }
+        guard verifyManifest(json: json, signature: signature) else { return ["bad-signature"] }
+        guard let manifest = parseManifest(json) else { return ["bad-manifest"] }
+        guard let text = textDigest() else { return ["no-text"] }
+        guard text == manifest.textHash else { return ["text-hash"] }
+        guard verifyBundle(manifest) else { return ["bundle-hash"] }
+        return []
     }
 
     // MARK: - 清单
@@ -149,7 +169,6 @@ enum IntegrityGuard {
 
     private static func verifyBundle(_ manifest: Manifest) -> Bool {
         let root = Bundle.main.bundleURL
-        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
         guard let enumerator = FileManager.default.enumerator(
             at: root,
             includingPropertiesForKeys: [.isRegularFileKey],
@@ -163,8 +182,10 @@ enum IntegrityGuard {
                 return false
             }
             if isDirectory.boolValue { continue }
-            guard url.path.hasPrefix(rootPrefix) else { return false }
-            let relative = String(url.path.dropFirst(rootPrefix.count))
+            // iOS 上 Bundle.main.bundleURL 可能是 /var/...，而枚举返回 /private/var/...
+            // （/var 是指向 /private/var 的符号链接）。按路径前缀比较会全部失败，
+            // 所以统一 resolve 符号链接后再按 pathComponents 比。
+            guard let relative = relativePath(of: url, root: root) else { continue }
             if isSkipped(relative, manifest.skip) { continue }
             guard let hashed = hashFile(url) else { return false }
             actual[relative] = hashed
@@ -182,6 +203,16 @@ enum IntegrityGuard {
             if value.0 { return false }
         }
         return true
+    }
+
+    /// 相对 app 根目录的路径；符号链接（/var vs /private/var）已归一。
+    private static func relativePath(of url: URL, root: URL) -> String? {
+        let target = url.resolvingSymlinksInPath().pathComponents
+        let base = root.resolvingSymlinksInPath().pathComponents
+        guard target.count > base.count, Array(target.prefix(base.count)) == base else {
+            return nil
+        }
+        return target.dropFirst(base.count).joined(separator: "/")
     }
 
     private static func isSkipped(_ relative: String, _ skip: [String]) -> Bool {

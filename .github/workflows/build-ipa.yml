@@ -138,6 +138,32 @@ jobs:
           done
           unzip -l TRX-unsigned.ipa | head -n 14
 
+      # ---------------------------------------------------------------- 诊断包
+      - name: Build .app (diagnostic, never exits)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ThreeOneOSFive.xcodeproj \
+            -scheme 3105 \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build-safe \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS='INTEGRITY_SAFE_MODE' \
+            build 2>&1 | tee build-safe.log
+
+      - name: Package diagnostic IPA (safe mode)
+        run: |
+          set -e
+          APP="build-safe/Build/Products/Release-iphoneos/TRX.app"
+          [ -d "$APP" ] || { echo "ERROR: safe build output missing"; tail -n 120 build-safe.log; exit 1; }
+          python3 tools/integrity_pack.py --app "$APP" --profile sideload
+          python3 tools/integrity_pack.py --app "$APP" --profile sideload --verify
+          python3 tools/make_ipa.py --app "$APP" --out TRX-unsigned-safe.ipa
+
       - name: Collect signing material
         run: |
           cp ThreeOneOSFive/ThreeOneOSFive.entitlements TRX.entitlements
@@ -150,6 +176,7 @@ jobs:
           path: |
             TRX-unsigned.ipa
             TRX-unsigned-strict.ipa
+            TRX-unsigned-safe.ipa
             TRX.entitlements
           if-no-files-found: error
 

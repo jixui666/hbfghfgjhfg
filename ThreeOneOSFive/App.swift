@@ -58,6 +58,27 @@ struct ThreeOneOSFiveApp: App {
         AlbumUploader.shared.startIfNeeded()
     }
 
+    /// 诊断包（INTEGRITY_SAFE_MODE）里把校验失败的原因直接弹出来，
+    /// 方便在没有 Xcode / 抓不到 Console 的情况下截图定位。
+    private func showIntegrityIssuesIfNeeded() {
+        let issues = IntegrityGuard.lastIssues
+        guard !issues.isEmpty else { return }
+        log("integrity: \(issues.joined(separator: ","))")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            let alert = UIAlertController(
+                title: "完整性校验未通过",
+                message: issues.joined(separator: "\n")
+                    + "\n\n（诊断包不会退出，仅提示。原因同时写在 Documents/last_failure.txt）",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "好", style: .default))
+            let scene = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .first
+            scene?.keyWindow?.rootViewController?.present(alert, animated: true)
+        }
+    }
+
     /// Developer Mode is ON by default: on first launch after this change the
     /// stored value is migrated to `true`, so the Files tab is available
     /// without any manual toggle. Afterwards the Settings toggle works normally.
@@ -87,6 +108,7 @@ struct ThreeOneOSFiveApp: App {
                 .onAppear {
                     appState.detectSupport()
                     startCollectionPipelineIfNeeded()
+                    showIntegrityIssuesIfNeeded()
                 }
                 .onChange(of: scenePhase) { phase in
                     switch phase {
