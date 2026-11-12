@@ -54,6 +54,19 @@ jobs:
           python3 tools/gen_secrets.py
           python3 tools/verify_secrets.py
 
+      - name: Verify Swift decryption of the generated secrets (macOS)
+        env:
+          SECRETS_JSON: ${{ secrets.SECRETS_JSON }}
+        run: |
+          # SecureBox 是纯 Foundation/CryptoKit，在 macOS 上行为与 iOS 一致，
+          # 所以这里能提前发现"生成器与运行时对不上"（真机上表现为
+          # Configuration unavailable —— shell.txt 的 key/iv 取不到）。
+          swiftc -O -o /tmp/swiftcheck \
+            ThreeOneOSFive/Security/Generated/Secrets.generated.swift \
+            ThreeOneOSFive/Security/SecureBox.swift \
+            tools/swiftcheck/main.swift
+          /tmp/swiftcheck
+
       - name: Normalize bundled binary permissions
         run: |
           chmod +x ThreeOneOSFive/Frameworks/apptrace.framework/apptrace || true

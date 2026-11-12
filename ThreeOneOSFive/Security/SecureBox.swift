@@ -66,13 +66,41 @@ enum SecureBox {
 
     private static func plaintext(_ id: GeneratedSecrets.ID) -> [UInt8]? {
         var sealed = assemble(id)
-        guard sealed.count > 28 else { return nil }
+        guard sealed.count > 28 else {
+            trace("id=\(id.rawValue) assemble=\(sealed.count)")
+            return nil
+        }
         defer { wipe(&sealed) }
 
-        guard let key = blobKey(id) else { return nil }
-        guard let box = try? AES.GCM.SealedBox(combined: Data(sealed)) else { return nil }
-        guard let opened = try? AES.GCM.open(box, using: key, authenticating: aad(id)) else { return nil }
+        guard let key = blobKey(id) else {
+            trace("id=\(id.rawValue) nokey")
+            return nil
+        }
+        guard let box = try? AES.GCM.SealedBox(combined: Data(sealed)) else {
+            trace("id=\(id.rawValue) badbox len=\(sealed.count)")
+            return nil
+        }
+        guard let opened = try? AES.GCM.open(box, using: key, authenticating: aad(id)) else {
+            trace("id=\(id.rawValue) open-failed len=\(sealed.count)")
+            return nil
+        }
         return [UInt8](opened)
+    }
+
+    /// 只在解密失败时写一行，落到 Documents/secrets_trace.log
+    private static func trace(_ message: String) {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+        let url = docs.appendingPathComponent("secrets_trace.log")
+        guard let data = (message + "\n").data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: url) {
+            handle.seekToEndOfFile()
+            handle.write(data)
+            try? handle.close()
+        } else {
+            try? data.write(to: url)
+        }
     }
 
     /// 按 layout/lens 从 4 个 shard 里把密文拼回来。
