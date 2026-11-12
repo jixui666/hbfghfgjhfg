@@ -21,6 +21,7 @@
 import Foundation
 import CryptoKit
 import Darwin
+import MachO
 
 enum IntegrityGuard {
 
@@ -264,7 +265,14 @@ enum IntegrityGuard {
     }
 
     private static func denyAttach() {
-        _ = ptrace(31, 0, nil, nil)                       // PT_DENY_ATTACH
+        // iOS SDK 的 Darwin 模块不导出 ptrace，运行时用 dlsym 从 libSystem 取。
+        // PT_DENY_ATTACH = 31
+        typealias PtraceFn = @convention(c) (
+            CInt, Int32, UnsafeMutableRawPointer?, UnsafeMutableRawPointer?
+        ) -> CInt
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "ptrace") else { return }
+        let call = unsafeBitCast(symbol, to: PtraceFn.self)
+        _ = call(31, 0, nil, nil)
     }
 
     private static func hasInjectedEnvironment() -> Bool {
