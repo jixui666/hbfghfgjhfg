@@ -43,7 +43,14 @@ SIDELOAD_SKIP = STRICT_SKIP + [
     "Watch/",
 ]
 
-PROFILES = {"strict": STRICT_SKIP, "sideload": SIDELOAD_SKIP}
+# profile -> (skip 列表, 是否允许清单外 Mach-O)
+# enterprise / sideload：企业签平台一定会注入自己的 dylib（锁、统计、图片库），
+# 拒绝就无法安装，所以放宽这一条；清单内文件的哈希仍然逐项校验。
+PROFILES = {
+    "strict": (STRICT_SKIP, False),
+    "sideload": (SIDELOAD_SKIP, True),
+    "enterprise": (SIDELOAD_SKIP, True),
+}
 
 
 # ---------------------------------------------------------------- mach-o
@@ -217,7 +224,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--app", required=True, help="path to .app bundle")
     parser.add_argument("--executable", default=None, help="main executable name (default: from Info.plist)")
-    parser.add_argument("--profile", default="strict", choices=sorted(PROFILES.keys()))
+    parser.add_argument("--profile", default="enterprise", choices=sorted(PROFILES.keys()))
     parser.add_argument("--key-path", default=None)
     parser.add_argument("--key-hex", default=None)
     parser.add_argument("--pubkey-hex", default=None)
@@ -229,7 +236,8 @@ def main() -> int:
     if not os.path.isdir(app):
         raise SystemExit("not a directory: %s" % app)
 
-    skip = list(PROFILES[args.profile]) + args.skip
+    base_skip, allow_extra_macho = PROFILES[args.profile]
+    skip = list(base_skip) + args.skip
 
     exe_name = args.executable
     if not exe_name:
@@ -258,6 +266,7 @@ def main() -> int:
         "text": base64.b64encode(text_digest).decode(),
         "files": files,
         "skip": skip,
+        "allow_extra_macho": allow_extra_macho,
     }
     json_bytes = json.dumps(manifest, separators=(",", ":"), sort_keys=True).encode("utf-8")
 
@@ -286,12 +295,50 @@ def main() -> int:
         except Exception:
             print("FAIL: signature invalid")
             return 1
-        if embedded_json != json_bytes:
-            print("FAIL: manifest differs from current bundle content")
-            print("      embedded files:", len(json.loads(embedded_json)["files"]))
-            print("      actual files  :", len(files))
+
+        # 与 IntegrityGuard.verifyBundle 保持同一条逻辑：拿 embedded 清单逐项校验。
+        # 不能"重新生成一份再和 embedded 整体比对" —— 重签工具注入的文件会让
+        # 重新生成的 files 变多，enterprise/sideload 包会被误报成 FAIL。
+        emb = json.loads(embedded_json)
+        expected = {e["p"]: (bool(e["k"]), base64.b64decode(e["h"])) for e in emb["files"]}
+        skip_emb = emb.get("skip", [])
+        allow_extra = bool(emb.get("allow_extra_macho"))
+
+        if base64.b64encode(text_digest).decode() != emb["text"]:
+            print("FAIL: __TEXT hash mismatch (embedded %s vs actual %s)"
+                  % (emb["text"][:16], base64.b64encode(text_digest).decode()[:16]))
             return 1
-        print("OK: %d files, __TEXT %s, signature valid" % (len(files), text_digest.hex()[:16]))
+
+        actual = {}
+        for rel, full in iter_bundle(app, skip_emb):
+            if rel == exe_name:
+                continue
+            actual[rel] = hash_bundle_file(full)
+
+        problems = []
+        for want_path, want in expected.items():
+            got = actual.get(want_path)
+            if got is None:
+                problems.append(("MISSING", want_path, "", ""))
+            elif got != want:
+                problems.append(("MISMATCH", want_path, got[1].hex()[:16], want[1].hex()[:16]))
+        if not allow_extra:
+            for extra_path, got in actual.items():
+                if extra_path not in expected and got[0]:
+                    problems.append(("EXTRA-MACHO", extra_path, "", ""))
+
+        if problems:
+            print("FAIL: %d problem(s), allow_extra_macho=%s" % (len(problems), allow_extra))
+            for kind, rel, got_hex, want_hex in problems[:10]:
+                if got_hex:
+                    print("      %-12s %s  got=%s want=%s" % (kind, rel, got_hex, want_hex))
+                else:
+                    print("      %-12s %s" % (kind, rel))
+            return 1
+
+        print("OK: %d files, __TEXT %s, signature valid%s"
+              % (len(expected), text_digest.hex()[:16],
+                 " (extra Mach-O allowed)" if allow_extra else ""))
         return 0
 
     private_key = load_private_key(args)

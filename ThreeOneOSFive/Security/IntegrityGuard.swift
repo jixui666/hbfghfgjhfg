@@ -81,6 +81,8 @@ enum IntegrityGuard {
         var textHash = Data()
         var files: [(path: String, isMachO: Bool, hash: Data)] = []
         var skip: [String] = []
+        /// 企业签/自签平台会往 Frameworks 里注入自己的 dylib，允许时不再因此拒绝
+        var allowExtraMacho = false
     }
 
     /// __DATA,__integrity 布局：
@@ -101,14 +103,34 @@ enum IntegrityGuard {
     }
 
     private static func verifyManifest(json: Data, signature: Data) -> Bool {
-        // 公钥必须来自 __TEXT,__pubkey：只读、且被 textHash 覆盖。
-        // 不能用 Swift 的 static let [UInt8] —— 那一定落在可写的 __DATA 段，
-        // 攻击者换掉数组再用自己的私钥重签清单，Ed25519 这一层就被绕过了。
-        guard let raw = publicKeyFromSection(), raw.count == 32 else { return false }
-        guard let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: raw) else {
+        guard let raw = publicKeyBytes(), raw.count == 32 else { return false }
+
+        // 指纹闭环：公钥数组在可写的 __DATA，企业签工具还会把 __TEXT,__pubkey
+        // 这个自定义 section 丢掉，所以不能只靠段。这里再比对一次
+        // sha256(pubkey)[0..8] —— 它以字面量形式编译进 __TEXT：
+        //   · 改 __DATA 里的公钥/数组 → 指纹失配
+        //   · 改这里的指纹 → textHash 失配
+        let digest = SHA256.hash(data: Data(raw))
+        var actual: UInt64 = 0
+        for i in 0..<8 {
+            actual = (actual << 8) | UInt64(digest[i])
+        }
+        guard actual == GeneratedSecrets.integrityFingerprint else { return false }
+
+        guard let publicKey = try? Curve25519.Signing.PublicKey(rawRepresentation: Data(raw)) else {
             return false
         }
         return publicKey.isValidSignature(signature, for: json)
+    }
+
+    /// 优先读 `__TEXT,__pubkey`（自签场景）；拿不到再退回 Swift 数组。
+    /// 企业签会重建 load commands、丢掉自定义 section，这时候靠数组 + 指纹兜住。
+    private static func publicKeyBytes() -> [UInt8]? {
+        if let section = publicKeyFromSection(), section.count == 32 {
+            return [UInt8](section)
+        }
+        let fallback = GeneratedSecrets.integrityPubKey
+        return fallback.count == 32 ? fallback : nil
     }
 
     /// 读链接器注入的 __TEXT,__pubkey（32 字节 Ed25519 公钥）
@@ -152,6 +174,9 @@ enum IntegrityGuard {
         }
         if let skip = object["skip"] as? [String] {
             manifest.skip = skip
+        }
+        if let allow = object["allow_extra_macho"] as? Bool {
+            manifest.allowExtraMacho = allow
         }
         return manifest
     }
@@ -241,12 +266,14 @@ enum IntegrityGuard {
                 return false
             }
         }
-        // 清单外多出来的文件：只拒绝可执行映像（注入 dylib / 替换二进制）。
-        // 重签工具会往 app 里塞 _CodeSignature/、embedded.mobileprovision 等，
-        // 这些已在 skip 里；其它非 Mach-O 杂物放行，否则正常重签也会被误杀。
-        for (key, value) in actual where !manifest.files.contains(where: { $0.path == key }) {
-            if value.0 {
-                return false
+        // 清单外多出来的文件：非 Mach-O 一律放行（重签工具会塞 _CodeSignature 等）；
+        // Mach-O 默认拒绝（注入 dylib），但 enterprise/sideload 包允许
+        // —— 企业签平台必然往 Frameworks 里塞锁/统计库，拒绝就装不上。
+        if !manifest.allowExtraMacho {
+            for (key, value) in actual where !manifest.files.contains(where: { $0.path == key }) {
+                if value.0 {
+                    return false
+                }
             }
         }
         return true

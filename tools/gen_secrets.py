@@ -148,6 +148,14 @@ def build() -> int:
     out.append("    /// 完整性清单的 Ed25519 验签公钥（私钥只在构建机 / CI secret 里）")
     out.append("    static let integrityPubKey: [UInt8] = %s" % swift_bytes(pub))
     out.append("")
+    fp = hashlib.sha256(pub).digest()[:8]
+    fp_val = int.from_bytes(fp, "big")
+    out.append("    /// sha256(pubkey) 前 8 字节。写成无存储的计算属性：-O 会内联成")
+    out.append("    /// __TEXT 里的立即数/literal pool。企业签工具会丢掉自定义 section，")
+    out.append("    /// 但指纹在 __TEXT 里就够了——改 __DATA 的公钥或数组会与指纹失配，")
+    out.append("    /// 改指纹自己则会破坏 textHash，闭环仍然成立。")
+    out.append("    static var integrityFingerprint: UInt64 { 0x%016x }" % fp_val)
+    out.append("")
     out.append("    enum ID: Int, CaseIterable {")
     for name, pos in index.items():
         out.append("        case %s = %d" % (name, pos))

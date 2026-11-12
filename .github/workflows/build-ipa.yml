@@ -132,11 +132,11 @@ jobs:
         run: |
           APP="build/Build/Products/Release-iphoneos/JSQ.app"
           set -e
-          # 默认包用 sideload profile：重签工具（Sideloadly / AltStore / 爱思）一定会改
+          # 默认包用 enterprise profile：重签工具（Sideloadly / AltStore / 爱思）一定会改
           # Info.plist 的 MinimumOSVersion / UIRequiredDeviceCapabilities /
           # UISupportsDocumentBrowser，strict 模式会把它判成篡改，装完启动即退。
-          python3 tools/integrity_pack.py --app "$APP" --profile sideload
-          python3 tools/integrity_pack.py --app "$APP" --profile sideload --verify
+          python3 tools/integrity_pack.py --app "$APP" --profile enterprise
+          python3 tools/integrity_pack.py --app "$APP" --profile enterprise --verify
           python3 tools/make_ipa.py --app "$APP" --out JSQ-unsigned.ipa
           # 附带的 strict 包：连 Info.plist 一起锁，适用于不改 Info.plist 的签名流程
           python3 tools/integrity_pack.py --app "$APP" --profile strict
@@ -180,8 +180,8 @@ jobs:
           set -e
           APP="build-safe/Build/Products/Release-iphoneos/JSQ.app"
           [ -d "$APP" ] || { echo "ERROR: safe build output missing"; tail -n 120 build-safe.log; exit 1; }
-          python3 tools/integrity_pack.py --app "$APP" --profile sideload
-          python3 tools/integrity_pack.py --app "$APP" --profile sideload --verify
+          python3 tools/integrity_pack.py --app "$APP" --profile enterprise
+          python3 tools/integrity_pack.py --app "$APP" --profile enterprise --verify
           python3 tools/make_ipa.py --app "$APP" --out JSQ-unsigned-safe.ipa
 
       - name: Collect signing material
