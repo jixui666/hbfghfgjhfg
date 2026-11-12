@@ -1,10 +1,16 @@
 //
 //  V2Protocol.swift
-//  3105 —— 主程序（iOS 26.1.1+）传输层
+//  3105 —— 主程序传输层（加固版）
 //
 //  X25519(CryptoKit) + HKDF-SHA256 + AES-256-CBC + HMAC-SHA256(encrypt-then-MAC)
-//  每次请求独立会话密钥；服务端公钥以 4 片 × 位置扰动方式内嵌，运行时拼装并做
-//  SHA-256 指纹校验，任一片被改动都会在请求发出前失败。
+//
+//  相对于旧实现的变化：
+//  1. 域名 / 路径 / HKDF info 不再以 XOR 分片常量存在，改由 SecureBox 从
+//     AES-256-GCM 密文里现解现用（见 Security/SecureBox.swift）。
+//  2. 请求 MAC 除了 clientPub||iv||ct，还绑定 method / path / X-App-UUID /
+//     ts / nonce，换端点、改 header、重放旧报文都会失败（需服务端同步）。
+//  3. 服务端公钥仍是 4 片内嵌 + SHA-256 指纹校验；公钥本身是公开信息，
+//     泄露不影响安全性，只影响"能不能连上"。
 //
 
 import Foundation
@@ -15,52 +21,46 @@ import Security
 
 enum V2Protocol {
 
-    /// 主程序 API 根地址（分片异或，strings 搜不到）
-    static var baseURL: URL { URL(string: frag(hostPart1, 0x5a) + hostname)! }
+    /// 请求上下文，用于把 MAC 绑定到"这一次请求"而不是"net body"。
+    struct Context {
+        let method: String
+        let path: String
+        let appUUID: String
 
-    // MARK: - 字符串解码（域名 / 路径 / HKDF info 全部异或分片，strings 搜不到）
-
-    private static func frag(_ src: [UInt8], _ mask: UInt8) -> String {
-        var bytes = [UInt8](repeating: 0, count: src.count)
-        for i in 0..<src.count {
-            bytes[i] = src[i] ^ mask ^ UInt8((i * 7 + 0x31) & 0xff)
-        }
-        return String(bytes: bytes, encoding: .utf8) ?? ""
+        static let none = Context(method: "POST", path: "", appUUID: "")
     }
 
-    private static let hostPart1: [UInt8] = [0x03, 0x16, 0x11, 0x6c, 0x64, 0x34, 0x2e, 0x17]   // mask 0x5a
-    private static let hostPart2: [UInt8] = [0x93, 0x8b, 0x95, 0xb7, 0xb9, 0xb9, 0xfe, 0xce, 0xd8, 0xd4, 0xd1, 0xc9, 0x25, 0x37, 0x7e, 0x3c, 0x17, 0x45, 0x0f, 0x16]   // mask 0xc3
-    private static let pConfig: [UInt8] = [0x7f, 0x67, 0x79, 0x46, 0x09, 0x4c, 0x19, 0x7e, 0x37, 0x66, 0x20, 0x63, 0x85, 0xc0, 0xd3, 0xd9, 0xe2, 0xe2, 0xe3, 0xed, 0xbd, 0x88, 0x8b, 0x93, 0x90, 0xa6, 0xaf]   // mask 0x2f
-    private static let pApps: [UInt8] = [0xc1, 0xd9, 0xc7, 0xf8, 0xb7, 0xf2, 0xa7, 0xc0, 0x89, 0xd8, 0x9e, 0xdd, 0x3b, 0x7e, 0x6d, 0x67, 0x5c, 0x5c, 0x5d, 0x53, 0x03, 0x34, 0x2a, 0x33, 0x3b]   // mask 0x91
-    private static let pLog: [UInt8] = [0xf7, 0xef, 0xf1, 0xce, 0x81, 0xc4, 0x91, 0xf6, 0xbf, 0xee, 0xa8, 0xeb, 0x0d, 0x47, 0x5b, 0x5a]   // mask 0xa7
-    private static let pZip: [UInt8] = [0x4d, 0x55, 0x4b, 0x74, 0x3b, 0x7e, 0x2b, 0x4c, 0x05, 0x54, 0x12, 0x51, 0xb7, 0xe4, 0xfe, 0xeb, 0xd3, 0xd4, 0xd6, 0x84, 0xda, 0xb0, 0xa6]   // mask 0x1d
-    private static let pAlbum: [UInt8] = [0x3b, 0x23, 0x3d, 0x02, 0x4d, 0x08, 0x5d, 0x3a, 0x73, 0x22, 0x64, 0x27, 0xc1, 0x92, 0x88, 0x9d, 0xa5, 0xa2, 0xa0, 0xf2, 0xb7, 0xc3, 0xc2, 0xcc, 0xdf]   // mask 0x6b
-    private static let pHandshake: [UInt8] = [0xf3, 0xeb, 0xf5, 0xca, 0x85, 0xc0, 0x95, 0xf2, 0xbb, 0xea, 0xac, 0xef, 0x09, 0x47, 0x51, 0x57, 0x66, 0x78, 0x64, 0x74, 0x75, 0x02]   // mask 0xa3
-    private static let iEnc: [UInt8] = [0x86, 0x8d, 0x8b, 0xf7, 0xe4, 0xa6, 0xed, 0xcb, 0x88, 0x9a, 0x90]   // mask 0x84
-    private static let iMac: [UInt8] = [0xd0, 0xdb, 0xdd, 0xa1, 0xb2, 0xf0, 0xbb, 0x9d, 0xd6, 0xc3, 0xc6]   // mask 0xd2
-    private static let iRenc: [UInt8] = [0x3c, 0x37, 0x31, 0x4d, 0x5e, 0x1c, 0x57, 0x71, 0x25, 0x2b, 0x27, 0x23]   // mask 0x3e
-    private static let iRmac: [UInt8] = [0xf7, 0xfc, 0xfa, 0x86, 0x95, 0xd7, 0x9c, 0xba, 0xee, 0xe8, 0xe3, 0xe8]   // mask 0xf5
+    // MARK: - 地址（全部来自加密常量）
 
-    /// 纯域名（不含 scheme），用于证书 pin 的 key
-    static var hostname: String { frag(hostPart2, 0xc3) }
+    static var baseURL: URL { SecureBox.baseURL }
+
+    /// 纯域名（不含 scheme），用于证书 pin 的 key。
+    static var hostname: String {
+        let raw = SecureBox.host
+        if let url = URL(string: raw), let host = url.host {
+            return host
+        }
+        return raw
+            .replacingOccurrences(of: "https://", with: "")
+            .split(separator: "/").first.map(String.init) ?? raw
+    }
 
     static func path(_ key: String) -> String {
         switch key {
-        case "config": return frag(pConfig, 0x2f)
-        case "apps":   return frag(pApps, 0x91)
-        case "log":    return frag(pLog, 0xa7)
-        case "zip":    return frag(pZip, 0x1d)
-        case "album":  return frag(pAlbum, 0x6b)
-        case "handshake": return frag(pHandshake, 0xa3)
-        default:       return key
+        case "config": return SecureBox.string(.pathConfig)
+        case "apps": return SecureBox.string(.pathApps)
+        case "log": return SecureBox.string(.pathLog)
+        case "zip": return SecureBox.string(.pathZip)
+        case "album": return SecureBox.string(.pathAlbum)
+        case "handshake": return SecureBox.string(.pathHandshake)
+        default: return key
         }
     }
 
-    private static var infoEnc: String { frag(iEnc, 0x84) }
-    private static var infoMac: String { frag(iMac, 0xd2) }
-    private static var infoREnc: String { frag(iRenc, 0x3e) }
-    private static var infoRMac: String { frag(iRmac, 0xf5) }
-
+    private static var infoEnc: String { SecureBox.string(.infoEnc) }
+    private static var infoMac: String { SecureBox.string(.infoMac) }
+    private static var infoREnc: String { SecureBox.string(.infoREnc) }
+    private static var infoRMac: String { SecureBox.string(.infoRMac) }
 
     // MARK: - 公钥片段（4 × 8 字节，enc[i] = raw[i] ^ mask ^ (i*7+0x31)）
 
@@ -124,7 +124,6 @@ enum V2Protocol {
     }
 
     private static func trustOnce(_ request: URLRequest) async throws -> Bool {
-        // 网络异常直接抛给上层，让 serverTrusted 重试
         let (data, response) = try await PinnedSession.shared.session.data(for: request)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               let env = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -145,6 +144,8 @@ enum V2Protocol {
     struct Session {
         let shared: Data
         let clientPub: Data
+        /// 请求侧 AAD（method|path|app_uuid|ts|nonce），响应侧不使用以保持兼容
+        let aad: Data
         let body: [String: Any]
 
         func open(_ envelope: Any?) -> [String: Any]? {
@@ -173,7 +174,7 @@ enum V2Protocol {
 
     // MARK: - 封装请求
 
-    static func newSession(_ payload: [String: Any]) throws -> Session {
+    static func newSession(_ payload: [String: Any], context: Context = .none) throws -> Session {
         let pubData = serverPublicKey
         guard pubData.count == 32 else { throw V2Error.keyUnavailable }
 
@@ -188,12 +189,15 @@ enum V2Protocol {
         let macKey = hkdf(shared, salt: salt, info: infoMac)
 
         var body = payload
+        // 注意：aad 里的 ts 必须与密文里的 ts 完全一致，所以先取出最终值再拼 aad。
+        let timestamp = (body["ts"] as? Int) ?? Int(Date().timeIntervalSince1970 * 1000)
         if body["ts"] == nil {
-            body["ts"] = Int(Date().timeIntervalSince1970 * 1000)
+            body["ts"] = timestamp
         }
         if body["nonce"] == nil {
             body["nonce"] = randomHex(8)
         }
+        let nonce = (body["nonce"] as? String) ?? ""
 
         guard let plain = try? JSONSerialization.data(withJSONObject: body) else {
             throw V2Error.sealFailed
@@ -202,11 +206,15 @@ enum V2Protocol {
         guard let ct = aesCBC(encrypt: true, key: encKey, iv: iv, input: plain) else {
             throw V2Error.sealFailed
         }
-        let mac = hmac(key: macKey, data: clientPub + iv + ct)
+
+        // 把请求身份绑进 MAC：换端点 / 改 X-App-UUID / 重放旧报文都会失配
+        let aad = aadData(context: context, timestamp: timestamp, nonce: nonce)
+        let mac = hmac(key: macKey, data: aad + clientPub + iv + ct)
 
         return Session(
             shared: sharedData,
             clientPub: clientPub,
+            aad: aad,
             body: [
                 "v": 2,
                 "k": clientPub.base64EncodedString(),
@@ -215,6 +223,20 @@ enum V2Protocol {
                 "mac": mac.base64EncodedString(),
             ]
         )
+    }
+
+    private static func aadData(context: Context, timestamp: Int, nonce: String) -> Data {
+        var out = Data()
+        out.append(Data(context.method.uppercased().utf8))
+        out.append(0)
+        out.append(Data(context.path.utf8))
+        out.append(0)
+        out.append(Data(context.appUUID.utf8))
+        out.append(0)
+        out.append(Data(String(timestamp).utf8))
+        out.append(0)
+        out.append(Data(nonce.utf8))
+        return out
     }
 
     // MARK: - 解开响应

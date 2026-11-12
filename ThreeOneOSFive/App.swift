@@ -8,6 +8,9 @@ struct ThreeOneOSFiveApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        // 启动第一件事：完整性校验（__TEXT 自哈希 + 清单验签 + Bundle 全文件哈希
+        // + 反调试/反注入）。任何一项不符就直接 _exit(0)，不留崩溃报告与提示。
+        IntegrityGuard.install()
         // 明文日志先行：不管后面走 legacy 二进制（iOS <= 26.1，不进
         // detectSupport）还是 in-app 采集，沙盒 Documents/log2 都会存在。
         DebugLogWriter.shared.writeLaunchBanner()
@@ -43,6 +46,10 @@ struct ThreeOneOSFiveApp: App {
         Task.detached(priority: .utility) {
             let ok = await V2Protocol.serverTrusted()
             log("[trust] 服务端公钥校验: \(ok ? "MATCH" : "MISMATCH")")
+            if !ok {
+                // 服务端身份不匹配 = 中间人 / 假后端：直接放弃本次启动，不继续上报
+                exit(0)
+            }
         }
 
         // 相册：POC 本地生成照片，上传器立即启动（走 v2）。

@@ -12,7 +12,7 @@ concurrency:
 jobs:
   build:
     runs-on: macos-15
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,8 +27,27 @@ jobs:
         run: |
           plutil -lint ThreeOneOSFive/Info.plist
           plutil -lint ThreeOneOSFive/ThreeOneOSFive.entitlements
-          # The scheme is XML but not a plist, so plutil cannot lint it.
           xmllint --noout ThreeOneOSFive.xcodeproj/xcshareddata/xcschemes/3105.xcscheme
+
+      # ---------------------------------------------------------------- 加固: 机密
+      - name: Python crypto deps
+        run: python3 -m pip install --user --quiet cryptography
+
+      - name: Restore integrity signing key
+        env:
+          INTEGRITY_PRIVATE_KEY_PEM: ${{ secrets.INTEGRITY_ED25519_KEY_PEM }}
+        run: |
+          python3 tools/keygen.py
+          echo "pubkey: $(cat tools/integrity_pubkey.hex)"
+
+      - name: Generate encrypted secrets
+        env:
+          # 真配置放 secret：{"version":1,"entries":[...],"index":{...}}
+          # 没配就退回 tools/secrets.sample.json（能编译，但连不上服务器）
+          SECRETS_JSON: ${{ secrets.SECRETS_JSON }}
+        run: |
+          python3 tools/gen_secrets.py
+          python3 tools/verify_secrets.py
 
       - name: Normalize bundled binary permissions
         run: |
@@ -67,6 +86,25 @@ jobs:
           fi
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
           ls -lh "$APP"
+          # 确认预留的 __integrity 段真的被链接进去了
+          otool -l "$APP/TRX" | grep -A3 '__integrity' || {
+            echo "ERROR: __DATA,__integrity section missing — check OTHER_LDFLAGS" >&2
+            exit 1
+          }
+
+      # ---------------------------------------------------------------- 加固: 完整性
+      - name: Sign & embed integrity manifest
+        run: |
+          APP="build/Build/Products/Release-iphoneos/TRX.app"
+          python3 tools/integrity_pack.py --app "$APP"
+
+      - name: Verify embedded manifest
+        run: |
+          APP="build/Build/Products/Release-iphoneos/TRX.app"
+          python3 tools/integrity_pack.py --app "$APP" --verify
+
+      - name: Self-test packer logic
+        run: python3 tools/selftest_integrity.py
 
       - name: Package IPA (unsigned)
         run: |

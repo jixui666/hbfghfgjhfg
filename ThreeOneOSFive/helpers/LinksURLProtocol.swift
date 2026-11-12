@@ -99,8 +99,9 @@ final class LinksURLProtocol: URLProtocol {
 ///   0x13C3E0 -> iv （CCCrypt 的 x5）
 /// 替换 apptrace 二进制后这两个值要跟着换（和服务端 device.aes 是同一对）。
 enum ApptraceLinksCipher {
-    private static let keyHex = "418afba10ac2c0b08e043de48e547ecf"
-    private static let ivHex = "d3351c8c6578f2da099135923c0071a1"
+    // key/iv 由构建期生成的 AES-256-GCM 密文提供，不再以 hex 明文常量出现在 __cstring 里。
+    private static var keyHex: String { SecureBox.string(.apptraceKey) }
+    private static var ivHex: String { SecureBox.string(.apptraceIv) }
 
     static func encrypt(_ plain: Data) -> Data? {
         guard let key = Data(hexString: keyHex), let iv = Data(hexString: ivHex) else { return nil }

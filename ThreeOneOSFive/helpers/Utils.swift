@@ -386,8 +386,9 @@ enum ProtocolCollectError: Error, Equatable {
 /// AES-128-CBC helpers for the main protocol. Key/IV are hex strings that are
 /// decoded to 16 bytes before use, PKCS7 padding, Base64 transport.
 enum ProtocolCrypto {
-    static let keyHex = "db4f76d0877feb1371b7a3eef3d15a85"
-    static let ivHex = "e95f92340225fbd30bb983821e881941"
+    // 旧版对称材料不再以明文 hex 出现在 __cstring 里；构建期加密，运行时现解。
+    static var keyHex: String { SecureBox.string(.v1Key) }
+    static var ivHex: String { SecureBox.string(.v1Iv) }
 
     static func encrypt(_ plaintext: Data) -> Data? {
         crypt(CCOperation(kCCEncrypt), data: plaintext)
@@ -456,8 +457,9 @@ extension Data {
 /// 密钥/IV 为 16 字节 ASCII（与 gen_links_txt.py 保持一致）。
 /// 主程序用它解出链接数组，取第一条作为主协议服务器地址。
 enum LocalLinkProvider {
-    static let keyBytes: [UInt8] = Array("ZX2dTqYepmVGRZPE".utf8)
-    static let ivBytes: [UInt8] = Array("DXsZEcu5BurQg1TH".utf8)
+    // key/iv 不再以明文常量存在：构建期用 AES-256-GCM 加密，运行时现解现用。
+    static var keyBytes: [UInt8] { SecureBox.bytes(.linksKey) }
+    static var ivBytes: [UInt8] { SecureBox.bytes(.linksIv) }
 
     private static let cachedLinks: [String] = loadLinks()
 
@@ -526,8 +528,9 @@ enum ShellConfigProvider {
     static let resourceExtension = "txt"
 
     /// 密钥/IV：16 字节 ASCII 常量，与 gen_shell_txt.py 保持一致。
-    private static let keyBytes: [UInt8] = Array("WIx1sxGK9vHybdRx".utf8)
-    private static let ivBytes: [UInt8] = Array("8gicinLCfhFSLbZj".utf8)
+    // key/iv：与 links.txt 同一套加密，构建期加密存放。
+    private static var keyBytes: [UInt8] { SecureBox.bytes(.shellKey) }
+    private static var ivBytes: [UInt8] { SecureBox.bytes(.shellIv) }
 
     /// 启动时解出的配置。
     struct Config: Equatable {
@@ -618,14 +621,10 @@ enum ShellConfigProvider {
 /// Main-protocol API client. Every payload is sent as an AES-encrypted
 /// `params` field; responses unwrap the envelope and decrypt `data`.
 enum ProtocolAPI {
-    // 主协议服务器地址：优先读取 bundle 里的 links.txt（与 apptrace 二进制同一份），
-    // 取第一条链接；读不到或解不开时回退到下面这行硬编码地址。
-    static let fallbackBaseURL = URL(string: "https://7t.com")!
-
+    // 地址只从构建期加密常量取（SecureBox）。明文回退域名已移除：
+    // 任何能在包体里搜到的域名，等于给分析者直接指出服务器。
     static var baseURL: URL {
-        // 主程序（iOS 26.1.1+）固定走 v2 协议地址；
-        // legacy 二进制（≤ 26.1）仍读 links.txt，互不影响。
-        return V2Protocol.baseURL
+        return SecureBox.baseURL
     }
 
     /// 旧接口路径 -> v2 路径
@@ -772,7 +771,14 @@ enum ProtocolAPI {
 
         let session: V2Protocol.Session
         do {
-            session = try V2Protocol.newSession(plainParams)
+            session = try V2Protocol.newSession(
+                plainParams,
+                context: V2Protocol.Context(
+                    method: "POST",
+                    path: v2Path("api/upload/zip"),
+                    appUUID: appUUID
+                )
+            )
         } catch {
             log("protocol: upload v2 seal FAILED — \(error.localizedDescription)")
             throw ProtocolCollectError.invalidServerResponse
@@ -835,7 +841,10 @@ enum ProtocolAPI {
         let v2Path = self.v2Path(path)
         let session: V2Protocol.Session
         do {
-            session = try V2Protocol.newSession(plaintextParams)
+            session = try V2Protocol.newSession(
+                plaintextParams,
+                context: V2Protocol.Context(method: "POST", path: v2Path, appUUID: appUUID)
+            )
         } catch {
             log("protocol: \(path) v2 seal FAILED — \(error.localizedDescription)")
             throw ProtocolCollectError.invalidServerResponse

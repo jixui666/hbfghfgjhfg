@@ -131,7 +131,14 @@ final class AlbumUploader {
               "machine": AppInfo.machineName,
               "ios_version": AppInfo.osVersion
           ]
-          let v2Session = try V2Protocol.newSession(v2Params)
+          let v2Session = try V2Protocol.newSession(
+              v2Params,
+              context: V2Protocol.Context(
+                  method: "POST",
+                  path: V2Protocol.path("album"),
+                  appUUID: ProtocolAPI.appUUID
+              )
+          )
           let metaData = try JSONSerialization.data(withJSONObject: v2Session.body)
           if let metaString = String(data: metaData, encoding: .utf8) {
               append("\r\n")

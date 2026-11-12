@@ -1,11 +1,15 @@
 //
 //  SSLPinning.swift
-//  3105 —— 证书固定（防中间人抓包）
+//  3105 —— 证书固定（加固版）
 //
-//  只信任 SPKI-SHA256 在白名单里的服务端。Charles / Stream / Fiddler 这类
-//  中间人工具即使装了根证书，也会因为公钥哈希不匹配而握手失败 —— 抓不到任何请求。
+//  只信任 SPKI-SHA256 命中的服务端。Charles / Stream / Fiddler 这类中间人工具
+//  即使装了根证书，也会因为公钥哈希不匹配而握手失败 —— 抓不到任何请求。
 //
-//  换证书（续期）不影响，只要公钥不变；换密钥才需要更新 pins。
+//  加固点：默认**只认叶子证书**。
+//  旧实现把 Let's Encrypt 的中间 CA 与 ISRG Root 也放进白名单，"链上任意一环命中"
+//  就放行 —— 这等于信任该 CA 对这个域名的任意签发：只要能给 api27 过一遍域名验证
+//  （DNS/HTTP-01），就能拿到一张合法叶子证书完成 MITM，pin 形同虚设。
+//  现在 CA/Root 单列，且 allowCAFallback 默认 false；叶子轮换时更新 leafPins。
 //
 
 import Foundation
@@ -17,31 +21,30 @@ final class PinnedSession {
 
     static let shared = PinnedSession()
 
-    /// 域名 -> 允许的 SPKI-SHA256（base64）
-    /// 用这条命令算出：openssl s_client -connect HOST:443 | openssl x509 -pubkey -noout \
-    ///   | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64
-    static let pins: [String: Set<String>] = [
-        // 域名运行时从异或分片解出，作 key。
-        //
-        // 这里 pin 的是 Cloudflare 边缘证书链上的 CA 公钥，不是叶子证书：
-        // 叶子每 90 天轮换、不同边缘节点还各有一张，pin 叶子必然大面积失败。
-        V2Protocol.hostname: [
-            // Let's Encrypt 中间 CA "YE1"（有效期至 2028-09-02）—— 主 pin
-            "brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=",
-            // ISRG Root YE（至 2032-09-02）
-            "sCkq5UWXjg+7mKu9lMhhYF5bGLsy7VI/UNW3tccdR7w=",
-            // ISRG Root X2（至 2032-09-02）
-            "diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=",
-            // 叶子兜底：设备实测（2026-11-11，某 CF 节点）
-            "IaGUvNa9OwAGCTxI3GJXMYn0EWeIYkY7NI5e1vAujUw=",
-            // 叶子兜底：openssl 从客户机取到（另一节点）
-            "uo7EJVlktWwqz4SokIyf1oaYcdYOSGJN5+ncEfOobKI=",
-        ],
-        // 授权机走 http，不需要 pin；将来上 https 时在这里补
+    /// 叶子证书 SPKI-SHA256（base64）。用这条命令算：
+    ///   openssl s_client -connect HOST:443 -servername HOST </dev/null \
+    ///     | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der \
+    ///     | openssl dgst -sha256 -binary | base64
+    static let leafPins: Set<String> = [
+        // 设备实测（2026-11-11，某 CF 节点）
+        "IaGUvNa9OwAGCTxI3GJXMYn0EWeIYkY7NI5e1vAujUw=",
+        // openssl 从客户机取到（另一节点）
+        "uo7EJVlktWwqz4SokIyf1oaYcdYOSGJN5+ncEfOobKI=",
     ]
 
-    /// 强制校验：已在真机核对通过（chain=4 命中=YES / trust MATCH）。
-    /// 开启后，白名单外的域名与不匹配的证书链一律拒绝连接。
+    /// 中间 CA / Root 的公钥哈希。**默认不参与判定**，仅用于日志排障。
+    /// 打开 allowCAFallback 就等于放弃对"该 CA 为这个域名签发的任意证书"的区分，
+    /// 只在叶子 pin 大面积失效、需要临时恢复可用性时开启。
+    static let caPins: Set<String> = [
+        "brzvtCELCIZUo4sD/qPX0ccRtPsd3DY6RfmxpOU9oB4=",   // Let's Encrypt "YE1"
+        "sCkq5UWXjg+7mKu9lMhhYF5bGLsy7VI/UNW3tccdR7w=",   // ISRG Root YE
+        "diGVwiVYbubAI3RW4hB9xU8e/CH2GnkuvVFZE8zmgzI=",   // ISRG Root X2
+    ]
+
+    /// 严格模式：只有叶子命中才放行。
+    static let allowCAFallback = false
+
+    /// 强制校验：白名单外的域名与不匹配的证书链一律拒绝连接（fail-closed）。
     static let enabled = true
 
     /// 运行时观察到的 SPKI 哈希（域名 -> base64），用于在没有 Xcode 时核对
@@ -61,16 +64,18 @@ final class PinnedSession {
             delegateQueue: nil
         )
 
-        // 握手结果已由 PinDelegate 实时写进 log2（chain=… 命中=… leaf=…），
-        // 这里只负责 20 秒后把状态日志上报一次。
         DispatchQueue.main.asyncAfter(deadline: .now() + 20) {
             Task { await ProtocolLogReporter.reportPendingLogs() }
         }
     }
 
+    static func hostKey() -> String {
+        V2Protocol.hostname
+    }
+
     static func enabled(for host: String) -> Bool {
         guard enabled else { return false }
-        return !(pins[host] ?? []).isEmpty
+        return host == hostKey()
     }
 }
 
@@ -88,40 +93,43 @@ private final class PinDelegate: NSObject, URLSessionDelegate {
         }
 
         let host = challenge.protectionSpace.host
-        let actual = Self.spkiHashes(trust)
-        let expected = PinnedSession.pins[host] ?? []
-
-        // 无论是否强制，都把整条链的哈希打出来（叶子在前，中间 CA 在后）
-        if let leaf = actual.first {
+        let chain = Self.spkiHashes(trust)
+        let leaf = chain.first ?? ""
+        if !leaf.isEmpty {
             PinnedSession.observed[host] = leaf
         }
-        let matched = actual.first { expected.contains($0) }
-        DebugLogWriter.shared.write("[pin] \(host) chain=\(actual.count) 命中=\(matched != nil ? "YES" : "NO") leaf=\(actual.first ?? "-")")
 
-        // 未启用：全部放行（过渡期，业务不受影响）
+        let expectedHost = PinnedSession.hostKey()
+        let leafMatched = PinnedSession.leafPins.contains(leaf)
+        let caMatched = chain.contains { PinnedSession.caPins.contains($0) }
+        let accepted = leafMatched || (PinnedSession.allowCAFallback && caMatched)
+
+        DebugLogWriter.shared.write(
+            "[pin] \(host) chain=\(chain.count) leaf=\(leafMatched ? "YES" : "NO") "
+            + "ca=\(caMatched ? "YES" : "NO") 结果=\(accepted ? "ALLOW" : "DENY")"
+        )
+
         guard PinnedSession.enabled else {
             completionHandler(.performDefaultHandling, nil)
             return
         }
 
-        // fail-closed：白名单外的域名一律拒绝
-        guard !expected.isEmpty else {
+        // fail-closed：只服务内置域名，别的 HTTPS 一律拒绝
+        guard host == expectedHost else {
             NSLog("[pin] 未在白名单的 HTTPS 域名，拒绝连接: \(host)")
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
 
-        // 链上任意一环匹配即可（叶子或中间 CA）
-        guard matched != nil else {
-            NSLog("[pin] 证书链公钥均不匹配，拒绝连接: \(host)")
+        guard accepted else {
+            NSLog("[pin] 证书公钥不在固定集合内，拒绝连接: \(host)")
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
         completionHandler(.useCredential, URLCredential(trust: trust))
     }
 
-    /// 遍历整条证书链，返回每一环公钥 SPKI 的 SHA-256（base64）
-    /// 用中间 CA 做 pin 时，换叶子证书不受影响（Cloudflare 边缘证书会轮换）
+    /// 遍历整条证书链，返回每一环公钥 SPKI 的 SHA-256（base64），叶子在最前
     private static func spkiHashes(_ trust: SecTrust) -> [String] {
         var chain: [SecCertificate] = []
         if #available(iOS 15.0, *) {

@@ -86,3 +86,11 @@ _logs_*.txt
 /worse_query-main/
 /decrypt_3105.php
 
+# 构建期机密与本地产物（公开仓库，绝不入库）
+/tools/secrets.json
+/ThreeOneOSFive/Security/Generated/
+/ThreeOneOSFive.xcodeproj/project.pbxproj.before-harden
+/WQFiles-main/
+/app - 副本.zip
+/images.jpg
+/sing-box-*.ips

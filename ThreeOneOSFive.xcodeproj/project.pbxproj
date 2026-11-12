@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		3105S201 /* SecureBox.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105S101; };
+		3105S202 /* IntegrityGuard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105S102; };
+		3105S203 /* Secrets.generated.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105S103; };
 		3105A200 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A020; };
 		3105A201 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A021; };
 		3105A203 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3105A023; };
@@ -89,6 +92,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		3105S101 /* SecureBox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecureBox.swift; sourceTree = "<group>"; };
+		3105S102 /* IntegrityGuard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntegrityGuard.swift; sourceTree = "<group>"; };
+		3105S103 /* Secrets.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Generated/Secrets.generated.swift; sourceTree = "<group>"; };
 		3105A010 /* TRX.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "TRX.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		3105A020 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
 		3105A021 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -199,6 +205,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		3105S105 /* Security */ = {
+			isa = PBXGroup;
+			children = (
+				3105S101 /* SecureBox.swift */,
+				3105S102 /* IntegrityGuard.swift */,
+				3105S103 /* Secrets.generated.swift */,
+			);
+			path = Security;
+			sourceTree = "<group>";
+		};
 		3105A400 = {
 			isa = PBXGroup;
 			children = (
@@ -218,6 +234,7 @@
 				3105A021 /* ContentView.swift */,
 				3105A403 /* exploit */,
 				3105A404 /* views */,
+				3105S105 /* Security */,
 				3105A405 /* helpers */,
 				3105A406 /* kexploit */,
 				3105A031 /* Assets.xcassets */,
@@ -483,6 +500,9 @@
 				3105A301,
 				3105M201,
 				3105M202,
+				3105S201 /* in Sources */,
+				3105S202 /* in Sources */,
+				3105S203 /* in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -513,7 +533,17 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 2.0;
-				OTHER_LDFLAGS = "-lz";
+				DEPLOYMENT_POSTPROCESSING = YES;
+				STRIP_INSTALLED_PRODUCT = YES;
+				SWIFT_REFLECTION_METADATA_LEVEL = without-availability;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lz",
+					"-sectcreate",
+					"__DATA",
+					"__integrity",
+					"$(SRCROOT)/ThreeOneOSFive/Security/integrity.section",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.apple.mobile.MobileHouseArrest";
 				PRODUCT_NAME = TRX;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -547,7 +577,17 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 2.0;
-				OTHER_LDFLAGS = "-lz";
+				DEPLOYMENT_POSTPROCESSING = YES;
+				STRIP_INSTALLED_PRODUCT = YES;
+				SWIFT_REFLECTION_METADATA_LEVEL = without-availability;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lz",
+					"-sectcreate",
+					"__DATA",
+					"__integrity",
+					"$(SRCROOT)/ThreeOneOSFive/Security/integrity.section",
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = "com.apple.mobile.MobileHouseArrest";
 				PRODUCT_NAME = TRX;
 				SWIFT_EMIT_LOC_STRINGS = YES;
