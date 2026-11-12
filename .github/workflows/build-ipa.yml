@@ -187,3 +187,13 @@ jobs:
           name: build-log
           path: build.log
           if-no-files-found: ignore
+
+      - name: Upload dSYM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: TRX-dSYM
+          path: |
+            build/Build/Products/Release-iphoneos/TRX.app.dSYM
+            build-safe/Build/Products/Release-iphoneos/TRX.app.dSYM
+          if-no-files-found: ignore
