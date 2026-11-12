@@ -107,5 +107,7 @@
     </array>
     <key>MinimumOSVersion</key>
     <string>15.0</string>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 </dict>
 </plist>
