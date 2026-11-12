@@ -125,7 +125,17 @@ jobs:
 
       - name: Verify packaged IPA
         run: |
-          ls -lh TRX-unsigned.ipa TRX-unsigned-strict.ipa
+          set -e
+          for f in TRX-unsigned.ipa TRX-unsigned-strict.ipa; do
+            sz=$(stat -f%z "$f")
+            echo "$f: $sz bytes"
+            # 空 zip 只有 22 字节。少一次大小校验就会把空包发给手机。
+            [ "$sz" -gt 1000000 ] || { echo "ERROR: $f is only $sz bytes"; exit 1; }
+            unzip -l "$f" | grep -q 'Payload/TRX.app/TRX' \
+              || { echo "ERROR: $f missing main executable"; exit 1; }
+            unzip -l "$f" | grep -q 'Payload/TRX.app/Frameworks/apptrace.framework/apptrace' \
+              || { echo "ERROR: $f missing Frameworks"; exit 1; }
+          done
           unzip -l TRX-unsigned.ipa | head -n 14
 
       - name: Collect signing material

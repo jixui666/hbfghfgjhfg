@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""把 .app 打成 ipa（Payload/ 结构 + 保留 unix 权限位，等价于 macOS 的 zip -qry）。
+"""把 .app 打成 ipa（Payload/<name>.app 结构 + 保留 unix 权限位）。
+
+不要求 app 外面已经有 Payload/ 目录：直接拿 app 自己算前缀，
+所以 build/Build/Products/Release-iphoneos/TRX.app 和 <x>/Payload/TRX.app 都能打。
 
 用法: python tools/make_ipa.py --app <TRX.app> --out <x.ipa>
 """
@@ -8,6 +11,8 @@ import argparse
 import os
 import plistlib
 import zipfile
+
+MACHO_MAGICS = (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
 
 
 def main() -> int:
@@ -19,40 +24,47 @@ def main() -> int:
     app = os.path.abspath(args.app)
     out = os.path.abspath(args.out)
     name = os.path.basename(app)
-    # app 在 <root>/Payload/<name>.app，zip 里必须保留 Payload/ 这一层
-    root = os.path.dirname(os.path.dirname(app))
+    if not name.endswith(".app"):
+        raise SystemExit("not an .app bundle: %s" % name)
 
+    prefix = "Payload/" + name + "/"
     exe = plistlib.load(open(os.path.join(app, "Info.plist"), "rb"))["CFBundleExecutable"]
-    executables = {("Payload/%s/%s" % (name, exe))}
+
+    entries = []          # (zip path, absolute path)
+    executables = set()
     for base, _dirs, files in os.walk(app):
-        for f in files:
+        for f in sorted(files):
             full = os.path.join(base, f)
+            rel = os.path.relpath(full, app).replace(os.sep, "/")
+            arc = prefix + rel
+            entries.append((arc, full))
             try:
                 with open(full, "rb") as fh:
                     magic = fh.read(4)
             except OSError:
                 continue
-            if magic in (b"\xcf\xfa\xed\xfe", b"\xce\xfa\xed\xfe", b"\xca\xfe\xba\xbe"):
-                rel = os.path.relpath(full, root).replace(os.sep, "/")
-                executables.add(rel)
+            if rel == exe or magic in MACHO_MAGICS:
+                executables.add(arc)
+
+    if not entries:
+        raise SystemExit("app bundle is empty: %s" % app)
 
     if os.path.exists(out):
         os.remove(out)
-
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
-        for base, _dirs, files in os.walk(root):
-            for f in sorted(files):
-                full = os.path.join(base, f)
-                rel = os.path.relpath(full, root).replace(os.sep, "/")
-                if not rel.startswith("Payload/"):
-                    continue
-                info = zipfile.ZipInfo(rel)
-                info.external_attr = (0o100755 if rel in executables else 0o100644) << 16
-                info.compress_type = zipfile.ZIP_DEFLATED
-                with open(full, "rb") as fh:
-                    zf.writestr(info, fh.read())
+        for arc, full in entries:
+            info = zipfile.ZipInfo(arc)
+            info.external_attr = (0o100755 if arc in executables else 0o100644) << 16
+            info.compress_type = zipfile.ZIP_DEFLATED
+            with open(full, "rb") as fh:
+                zf.writestr(info, fh.read())
 
-    print("wrote %s  %.2f MB  (%d executables)" % (out, os.path.getsize(out) / 1048576, len(executables)))
+    size = os.path.getsize(out)
+    print("wrote %s  %.2f MB  (%d files, %d executables)" % (
+        out, size / 1048576, len(entries), len(executables)))
+    if size < 1024 * 1024:
+        print("[WARN] ipa 只有 %d 字节 —— 打包大概率是空的" % size)
+        return 2
     return 0
 
 
