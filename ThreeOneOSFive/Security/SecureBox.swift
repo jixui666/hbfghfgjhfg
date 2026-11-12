@@ -128,7 +128,10 @@ enum SecureBox {
     /// 按 layout/lens 从 4 个 shard 里把密文拼回来。
     private static func assemble(_ id: GeneratedSecrets.ID) -> [UInt8] {
         let index = id.rawValue
-        guard index >= 0, index * 8 + 7 < GeneratedSecrets.layout.count else { return [] }
+        // layout 是 [[Int]]：每个 entry 一行 8 个整数，所以边界是 layout.count 而不是
+        // layout.count/8。早先写成 index * 8 + 7 < layout.count，导致 index >= 2 的
+        // 条目全部返回空数组（19 条常量全解不出来 → Configuration unavailable）。
+        guard index >= 0, index < GeneratedSecrets.layout.count else { return [] }
         guard index * 4 + 3 < GeneratedSecrets.lens.count else { return [] }
 
         let record = GeneratedSecrets.layout[index]
