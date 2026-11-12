@@ -110,10 +110,10 @@ enum IntegrityGuard {
         // sha256(pubkey)[0..8] —— 它以字面量形式编译进 __TEXT：
         //   · 改 __DATA 里的公钥/数组 → 指纹失配
         //   · 改这里的指纹 → textHash 失配
-        let digest = SHA256.hash(data: Data(raw))
+        let digestBytes = [UInt8](SHA256.hash(data: Data(raw)))
         var actual: UInt64 = 0
         for i in 0..<8 {
-            actual = (actual << 8) | UInt64(digest[i])
+            actual = (actual << 8) | UInt64(digestBytes[i])
         }
         guard actual == GeneratedSecrets.integrityFingerprint else { return false }
 
@@ -261,8 +261,6 @@ enum IntegrityGuard {
                 return false
             }
             if got.0 != expected.isMachO || got.1 != expected.hash {
-                let gotTag = got.1.base64EncodedString().prefix(8)
-                let expTag = expected.hash.base64EncodedString().prefix(8)
                 return false
             }
         }
