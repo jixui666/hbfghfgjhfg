@@ -22,7 +22,7 @@ for id in GeneratedSecrets.ID.allCases {
     let index = id.rawValue
     let got = SecureBox.string(id)
     if got.isEmpty {
-        print("  [\(index)] \(id)  EMPTY")
+        print("  [\(index)] \(id)  EMPTY   \(SecureBox.debugDump(id))")
         failed += 1
         continue
     }

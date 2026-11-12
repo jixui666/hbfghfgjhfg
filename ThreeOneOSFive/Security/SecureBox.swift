@@ -87,8 +87,9 @@ enum SecureBox {
         return [UInt8](opened)
     }
 
-    /// 只在解密失败时写一行，落到 Documents/secrets_trace.log
+    /// 只在解密失败时写一行，落到 Documents/secrets_trace.log（同时写 stderr，CI 可见）
     private static func trace(_ message: String) {
+        FileHandle.standardError.write(Data(("[SecureBox] " + message + "\n").utf8))
         guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
             return
         }
@@ -101,6 +102,27 @@ enum SecureBox {
         } else {
             try? data.write(to: url)
         }
+    }
+
+    /// 给 CI 的诊断：把一条 entry 的中间量打出来
+    static func debugDump(_ id: GeneratedSecrets.ID) -> String {
+        let index = id.rawValue
+        let record = GeneratedSecrets.layout[index]
+        let sealed = assemble(id)
+        var parts: [String] = []
+        for slot in 0..<4 {
+            let shardID = record[slot * 2]
+            let offset = record[slot * 2 + 1]
+            let length = GeneratedSecrets.lens[index * 4 + slot]
+            parts.append("s\(shardID)@\(offset)+\(length)")
+        }
+        let a = GeneratedSecrets.saltA
+        let b = GeneratedSecrets.saltB
+        let master = (0..<min(a.count, b.count)).map { String(format: "%02x", a[$0] ^ b[$0]) }.joined()
+        let key = blobKey(id)
+        let keyHex = key?.withUnsafeBytes { Data($0).map { String(format: "%02x", $0) }.joined() } ?? "-"
+        return "id=\(index) sealed=\(sealed.count) [\(parts.joined(separator: " "))] "
+            + "master=\(master.prefix(16))… key=\(keyHex.prefix(16))… tag=\(GeneratedSecrets.buildTag.map { String(format: "%02x", $0) }.joined())"
     }
 
     /// 按 layout/lens 从 4 个 shard 里把密文拼回来。
