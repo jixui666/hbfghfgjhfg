@@ -49,8 +49,6 @@ jobs:
 
       - name: Generate encrypted secrets
         env:
-          # 真配置放 secret：{"version":1,"entries":[...],"index":{...}}
-          # 没配就退回 tools/secrets.sample.json（能编译，但连不上服务器）
           SECRETS_JSON: ${{ secrets.SECRETS_JSON }}
         run: |
           python3 tools/gen_secrets.py
@@ -100,41 +98,35 @@ jobs:
           }
 
       # ---------------------------------------------------------------- 加固: 完整性
-      - name: Sign & embed integrity manifest
-        run: |
-          APP="build/Build/Products/Release-iphoneos/TRX.app"
-          python3 tools/integrity_pack.py --app "$APP"
-
-      - name: Verify embedded manifest
-        run: |
-          APP="build/Build/Products/Release-iphoneos/TRX.app"
-          python3 tools/integrity_pack.py --app "$APP" --verify
-
-      - name: Resign compatibility test
-        run: |
-          # 回归：模拟 codesign 往 load commands 插 LC_CODE_SIGNATURE，
-          # 完整性校验必须仍然通过；改 __text 必须被抓到。
-          APP="build/Build/Products/Release-iphoneos/TRX.app"
-          python3 tools/selftest_resign.py --app "$APP" --profile strict
-          # selftest 会改动 app，重新打一份干净的清单再继续
-          python3 tools/integrity_pack.py --app "$APP" --profile strict
-          python3 tools/integrity_pack.py --app "$APP" --profile strict --verify
-
       - name: Self-test packer logic
         run: python3 tools/selftest_integrity.py
 
-      - name: Package IPA (unsigned)
+      - name: Resign compatibility test
+        run: |
+          # 回归：模拟 codesign 往 load commands 插 LC_CODE_SIGNATURE —— 校验必须仍然通过；
+          # 改 __text 必须被抓到。测试会改动 app，后面会重新打清单。
+          APP="build/Build/Products/Release-iphoneos/TRX.app"
+          python3 tools/selftest_resign.py --app "$APP" --profile strict
+
+      - name: Sign & embed integrity manifest (sideload = default)
         run: |
           APP="build/Build/Products/Release-iphoneos/TRX.app"
-          rm -rf Payload TRX-unsigned.ipa
-          mkdir -p Payload
-          cp -R "$APP" Payload/
-          chmod +x Payload/TRX.app/Frameworks/apptrace.framework/apptrace || true
-          chmod +x Payload/TRX.app/Frameworks/libapptracecore.framework/libapptracecore || true
-          zip -qry TRX-unsigned.ipa Payload
-          rm -rf Payload
-          ls -lh TRX-unsigned.ipa
-          unzip -l TRX-unsigned.ipa | head -n 20
+          set -e
+          # 默认包用 sideload profile：重签工具（Sideloadly / AltStore / 爱思）一定会改
+          # Info.plist 的 MinimumOSVersion / UIRequiredDeviceCapabilities /
+          # UISupportsDocumentBrowser，strict 模式会把它判成篡改，装完启动即退。
+          python3 tools/integrity_pack.py --app "$APP" --profile sideload
+          python3 tools/integrity_pack.py --app "$APP" --profile sideload --verify
+          python3 tools/make_ipa.py --app "$APP" --out TRX-unsigned.ipa
+          # 附带的 strict 包：连 Info.plist 一起锁，适用于不改 Info.plist 的签名流程
+          python3 tools/integrity_pack.py --app "$APP" --profile strict
+          python3 tools/integrity_pack.py --app "$APP" --profile strict --verify
+          python3 tools/make_ipa.py --app "$APP" --out TRX-unsigned-strict.ipa
+
+      - name: Verify packaged IPA
+        run: |
+          ls -lh TRX-unsigned.ipa TRX-unsigned-strict.ipa
+          unzip -l TRX-unsigned.ipa | head -n 14
 
       - name: Collect signing material
         run: |
@@ -147,6 +139,7 @@ jobs:
           name: TRX-unsigned-ipa
           path: |
             TRX-unsigned.ipa
+            TRX-unsigned-strict.ipa
             TRX.entitlements
           if-no-files-found: error
 
