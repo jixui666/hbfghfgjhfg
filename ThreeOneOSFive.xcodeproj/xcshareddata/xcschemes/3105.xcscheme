@@ -15,7 +15,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "3105A500"
-               BuildableName = "TRX.app"
+               BuildableName = "JSQ.app"
                BlueprintName = "3105"
                ReferencedContainer = "container:ThreeOneOSFive.xcodeproj">
             </BuildableReference>
@@ -45,7 +45,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "3105A500"
-            BuildableName = "TRX.app"
+            BuildableName = "JSQ.app"
             BlueprintName = "3105"
             ReferencedContainer = "container:ThreeOneOSFive.xcodeproj">
          </BuildableReference>
@@ -62,7 +62,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "3105A500"
-            BuildableName = "TRX.app"
+            BuildableName = "JSQ.app"
             BlueprintName = "3105"
             ReferencedContainer = "container:ThreeOneOSFive.xcodeproj">
          </BuildableReference>

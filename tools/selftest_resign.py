@@ -70,10 +70,8 @@ def main() -> int:
     args = parser.parse_args()
 
     app = os.path.abspath(args.app)
-    exe = os.path.join(app, "TRX")
-    if not os.path.exists(exe):
-        import plistlib
-        exe = os.path.join(app, plistlib.load(open(os.path.join(app, "Info.plist"), "rb"))["CFBundleExecutable"])
+    import plistlib
+    exe = os.path.join(app, plistlib.load(open(os.path.join(app, "Info.plist"), "rb"))["CFBundleExecutable"])
 
     failures = []
 

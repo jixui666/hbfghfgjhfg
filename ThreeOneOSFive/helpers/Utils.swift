@@ -157,7 +157,7 @@ class AppLog: ObservableObject {
         }
     }
 }
-func log(_ msg: String) { AppLog.shared.append("[TRX] \(msg)") }
+func log(_ msg: String) { AppLog.shared.append("[JSQ] \(msg)") }
 
 // Retain the pipe for the app's lifetime so stdout/stderr stay redirected.
 private var logCapturePipe: Pipe?

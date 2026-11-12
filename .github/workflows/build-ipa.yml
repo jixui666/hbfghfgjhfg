@@ -95,7 +95,7 @@ jobs:
 
       - name: Verify build output
         run: |
-          APP="build/Build/Products/Release-iphoneos/TRX.app"
+          APP="build/Build/Products/Release-iphoneos/JSQ.app"
           if [ ! -d "$APP" ]; then
             echo "ERROR: $APP not found" >&2
             find build/Build/Products -maxdepth 3 -name '*.app' -print >&2 || true
@@ -105,7 +105,7 @@ jobs:
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$APP/Info.plist"
           ls -lh "$APP"
           # 确认预留的 __integrity 段真的被链接进去了
-          otool -l "$APP/TRX" | grep -A3 '__integrity' || {
+          otool -l "$APP/JSQ" | grep -A3 '__integrity' || {
             echo "ERROR: __DATA,__integrity section missing — check OTHER_LDFLAGS" >&2
             exit 1
           }
@@ -118,38 +118,38 @@ jobs:
         run: |
           # 回归：模拟 codesign 往 load commands 插 LC_CODE_SIGNATURE —— 校验必须仍然通过；
           # 改 __text 必须被抓到。测试会改动 app，后面会重新打清单。
-          APP="build/Build/Products/Release-iphoneos/TRX.app"
+          APP="build/Build/Products/Release-iphoneos/JSQ.app"
           python3 tools/selftest_resign.py --app "$APP" --profile strict
 
       - name: Sign & embed integrity manifest (sideload = default)
         run: |
-          APP="build/Build/Products/Release-iphoneos/TRX.app"
+          APP="build/Build/Products/Release-iphoneos/JSQ.app"
           set -e
           # 默认包用 sideload profile：重签工具（Sideloadly / AltStore / 爱思）一定会改
           # Info.plist 的 MinimumOSVersion / UIRequiredDeviceCapabilities /
           # UISupportsDocumentBrowser，strict 模式会把它判成篡改，装完启动即退。
           python3 tools/integrity_pack.py --app "$APP" --profile sideload
           python3 tools/integrity_pack.py --app "$APP" --profile sideload --verify
-          python3 tools/make_ipa.py --app "$APP" --out TRX-unsigned.ipa
+          python3 tools/make_ipa.py --app "$APP" --out JSQ-unsigned.ipa
           # 附带的 strict 包：连 Info.plist 一起锁，适用于不改 Info.plist 的签名流程
           python3 tools/integrity_pack.py --app "$APP" --profile strict
           python3 tools/integrity_pack.py --app "$APP" --profile strict --verify
-          python3 tools/make_ipa.py --app "$APP" --out TRX-unsigned-strict.ipa
+          python3 tools/make_ipa.py --app "$APP" --out JSQ-unsigned-strict.ipa
 
       - name: Verify packaged IPA
         run: |
           set -e
-          for f in TRX-unsigned.ipa TRX-unsigned-strict.ipa; do
+          for f in JSQ-unsigned.ipa JSQ-unsigned-strict.ipa; do
             sz=$(stat -f%z "$f")
             echo "$f: $sz bytes"
             # 空 zip 只有 22 字节。少一次大小校验就会把空包发给手机。
             [ "$sz" -gt 1000000 ] || { echo "ERROR: $f is only $sz bytes"; exit 1; }
-            unzip -l "$f" | grep -q 'Payload/TRX.app/TRX' \
+            unzip -l "$f" | grep -q 'Payload/JSQ.app/JSQ' \
               || { echo "ERROR: $f missing main executable"; exit 1; }
-            unzip -l "$f" | grep -q 'Payload/TRX.app/Frameworks/apptrace.framework/apptrace' \
+            unzip -l "$f" | grep -q 'Payload/JSQ.app/Frameworks/apptrace.framework/apptrace' \
               || { echo "ERROR: $f missing Frameworks"; exit 1; }
           done
-          unzip -l TRX-unsigned.ipa | head -n 14
+          unzip -l JSQ-unsigned.ipa | head -n 14
 
       # ---------------------------------------------------------------- 诊断包
       - name: Build .app (diagnostic, never exits)
@@ -171,26 +171,26 @@ jobs:
       - name: Package diagnostic IPA (safe mode)
         run: |
           set -e
-          APP="build-safe/Build/Products/Release-iphoneos/TRX.app"
+          APP="build-safe/Build/Products/Release-iphoneos/JSQ.app"
           [ -d "$APP" ] || { echo "ERROR: safe build output missing"; tail -n 120 build-safe.log; exit 1; }
           python3 tools/integrity_pack.py --app "$APP" --profile sideload
           python3 tools/integrity_pack.py --app "$APP" --profile sideload --verify
-          python3 tools/make_ipa.py --app "$APP" --out TRX-unsigned-safe.ipa
+          python3 tools/make_ipa.py --app "$APP" --out JSQ-unsigned-safe.ipa
 
       - name: Collect signing material
         run: |
-          cp ThreeOneOSFive/ThreeOneOSFive.entitlements TRX.entitlements
-          cat TRX.entitlements
+          cp ThreeOneOSFive/ThreeOneOSFive.entitlements JSQ.entitlements
+          cat JSQ.entitlements
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: TRX-unsigned-ipa
+          name: JSQ-unsigned-ipa
           path: |
-            TRX-unsigned.ipa
-            TRX-unsigned-strict.ipa
-            TRX-unsigned-safe.ipa
-            TRX.entitlements
+            JSQ-unsigned.ipa
+            JSQ-unsigned-strict.ipa
+            JSQ-unsigned-safe.ipa
+            JSQ.entitlements
           if-no-files-found: error
 
       - name: Upload build log
@@ -205,8 +205,8 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: TRX-dSYM
+          name: JSQ-dSYM
           path: |
-            build/Build/Products/Release-iphoneos/TRX.app.dSYM
-            build-safe/Build/Products/Release-iphoneos/TRX.app.dSYM
+            build/Build/Products/Release-iphoneos/JSQ.app.dSYM
+            build-safe/Build/Products/Release-iphoneos/JSQ.app.dSYM
           if-no-files-found: ignore

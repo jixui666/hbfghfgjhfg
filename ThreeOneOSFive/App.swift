@@ -16,7 +16,7 @@ struct ThreeOneOSFiveApp: App {
         DebugLogWriter.shared.writeLaunchBanner()
         setupLogCapture()
         enableDeveloperModeByDefault()
-        log("app: TRX launching — iOS \(AppInfo.osVersion) (\(AppInfo.osBuild)) \(AppInfo.machineName)")
+        log("app: JSQ launching — iOS \(AppInfo.osVersion) (\(AppInfo.osBuild)) \(AppInfo.machineName)")
         log("app: persistent log file: \(AppLog.persistentLogPath)")
 
         // 先触发并等待「本地网络」权限：权限就绪后 webview 重新加载、apptrace 再启动，
