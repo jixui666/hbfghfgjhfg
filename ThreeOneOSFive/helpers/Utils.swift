@@ -4,6 +4,14 @@ import Darwin
 import Combine
 
 // MARK: - Global logger
+
+/// 采集用的“已安装应用”缓存。
+/// iOS 26.1–26.6.1 非越狱进程基本只能枚举到自己的容器，而每个候选背后都要付
+/// 一次 `MCMActivateContainerPath`（XPC）+ 一次 Info.plist 读取，实测能把单次
+/// 采集拖到 30 秒以上。这里缓存 5 分钟，并在候选数 ≤1 时直接短路。
+private var cachedInstalledBundleIDs: (ids: [String], at: Date)?
+private let installedBundleIDsTTL: TimeInterval = 300
+
 class AppLog: ObservableObject {
     static let shared = AppLog()
     @Published var entries: [String] = []
@@ -1188,12 +1196,29 @@ enum ProtocolCollectService {
     /// the Files browser (LS/API + MCM + filesystem + LaunchServices + MHA-C2
     /// + metadata inference), since plain MCM enumeration is restricted.
     private static func enumerateInstalledBundleIDs() -> [String] {
+        if let cached = cachedInstalledBundleIDs,
+           Date().timeIntervalSince(cached.at) < installedBundleIDsTTL {
+            log("collect: bundle ids from cache (\(cached.ids.count))")
+            return cached.ids
+        }
+
+        // 先用一次便宜的 MCM 枚举探底。iOS 26.1–26.6.1 上非越狱进程看不到别的
+        // 容器（MCM / LaunchServices 都被沙盒化），此时后面整条链路
+        // （metadata catalog、MHA 候选、filesystem 推断）全是空转的 O(n) XPC，
+        // 白等几十秒，最后仍然只上报自己。候选 ≤1 就直接短路。
+        let dynamicIdentifiers = ContainerStore.dynamicAppIdentifiers()
+        if dynamicIdentifiers.count <= 1 {
+            let own = Bundle.main.bundleIdentifier.map { [$0] } ?? dynamicIdentifiers
+            log("collect: enumeration restricted on this OS (mcm=\(dynamicIdentifiers.count)); reporting \(own.count)")
+            cachedInstalledBundleIDs = (own, Date())
+            return own
+        }
+
         let bundleMetadata = ContainerStore.applicationBundleMetadataCatalog()
         let apiApps = ContainerStore.applyingBundleMetadata(
             to: ContainerStore.installedAppsFromAPI(),
             catalog: bundleMetadata
         )
-        let dynamicIdentifiers = ContainerStore.dynamicAppIdentifiers()
         let mcmApps = ContainerStore.installedAppsFromMCM(
             identifiers: dynamicIdentifiers,
             bundleMetadata: bundleMetadata
