@@ -67,6 +67,34 @@ enum UserlandAccess {
         worse_query_container_identifier(path)
     }
 
+    /// Rebuilds the App Group `Library/Caches` this route uses as its symlink slot.
+    ///
+    /// A grant swaps `Library/Caches` for a symlink to the target and restores a
+    /// plain directory when it returns. A run that iOS suspends or kills mid-grant
+    /// leaves the symlink (or a half-finished `.wq-caches-preserved` swap) behind,
+    /// and from then on `createSymbolicLinkAtPath:` fails with EINVAL while
+    /// `worse_query`'s own restore never runs — every grant returns -4, the whole
+    /// container sweep comes back "refused", and collection stops right after the
+    /// index stage. Rebuilding the directory is what makes 27.2.1 answer again.
+    ///
+    /// - Returns: the number of groups whose `Library/Caches` is a real directory
+    ///   afterwards (0 means the App Group container itself is missing).
+    @discardableResult
+    static func repairAccessCache() -> Int32 {
+        var errorText: NSString?
+        let ready = worse_query_repair_access_cache(&errorText)
+        var rawDetail = ""
+        if let text = errorText {
+            rawDetail = text as String
+        }
+        let detail = rawDetail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let line = "userland: access cache repaired \(ready) group(s)"
+            + (detail.isEmpty ? "" : " — \(detail)")
+        log(line)
+        DebugLogWriter.shared.write(line)
+        return ready
+    }
+
     /// Verifies that the userland route works on this device. Cached once it
     /// succeeds; a failure is retried later because the App Group container may
     /// only appear after the first query.

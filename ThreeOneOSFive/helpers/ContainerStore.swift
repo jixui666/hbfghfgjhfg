@@ -126,6 +126,17 @@ enum ContainerStore {
     ]
 
     static func resolveAppContainerPath(bundleID: String) -> String? {
+        // The index is keyed by containermanager's own container label, so an
+        // exact hit is authoritative whatever the identifier looks like — some
+        // real labels carry "_" or non-ASCII and would fail the bundle-id shape
+        // check below, which is what turned server collect items into
+        // "容器不可用". No path is ever built out of the identifier here.
+        if let indexed = containerIndexSnapshot(waitForBuild: false)[bundleID],
+           isContainerPath(indexed) {
+            retainAccess(indexed)
+            return ContainerDiscoveryMerger.canonicalPath(indexed)
+        }
+
         guard (try? PatchPathValidator.canonicalBundleIdentifier(bundleID)) == bundleID else {
             return nil
         }
@@ -366,6 +377,26 @@ enum ContainerStore {
         return indexBuildInProgress
     }
 
+    // MARK: Access statistics
+
+    private static let accessStatsLock = NSLock()
+    private static var lastAccessScanStats = (granted: 0, refused: 0)
+
+    /// Grant/refused counts of the most recent container sweep. The stage-3 line
+    /// reports them so "grant 0 / refused 357" is visible from the server side
+    /// instead of showing up as an empty collection.
+    static var lastScanAccessStats: (granted: Int, refused: Int) {
+        accessStatsLock.lock()
+        defer { accessStatsLock.unlock() }
+        return lastAccessScanStats
+    }
+
+    private static func recordAccessStats(granted: Int, refused: Int) {
+        accessStatsLock.lock()
+        lastAccessScanStats = (granted, refused)
+        accessStatsLock.unlock()
+    }
+
     // MARK: Discovery stream
 
     /// Lets the collection pipeline start copying/zipping a bundle the moment its
@@ -469,8 +500,11 @@ enum ContainerStore {
             let handle = UserlandAccess.grant(directory)
             let identifier = containerIdentifier(containerPath: directory)
             if handle >= 0 { UserlandAccess.revoke(handle) }
-            guard let identifier, !identifier.isEmpty,
-                  ContainerBundleCandidateResolver.isValidBundleIdentifier(identifier) else { continue }
+            // No format filter here: the identity comes from containermanager's own
+            // xattr, so a label that fails a "looks like a bundle id" test (spaces,
+            // non-ASCII, >255 bytes) is still a real container and dropping it is
+            // what kept the index at 318 instead of the 356 the device has.
+            guard let identifier, !identifier.isEmpty else { continue }
             added[identifier] = directory
         }
         guard !added.isEmpty else { return }
@@ -582,6 +616,10 @@ enum ContainerStore {
             containerIndexBuiltAt = Date()
         }
         indexLock.unlock()
+        // A preloaded index is the result of the last successful sweep, so report
+        // its size as the granted count instead of 0/0 — otherwise the stage-3
+        // line reads "grant 0 / refused 0" on every launch that used the cache.
+        recordAccessStats(granted: map.count, refused: 0)
         log("browser: container index preloaded \(map.count) entries from disk")
     }
 
@@ -602,6 +640,7 @@ enum ContainerStore {
     /// the app index could not answer.
     private static func buildContainerIndex() -> [String: String] {
         let result = scanContainerRoots(appDataRoots)
+        recordAccessStats(granted: result.granted, refused: result.refused)
         log("browser: container index built — mapped=\(result.index.count) grants=\(result.granted) refused=\(result.refused)")
         return result.index
     }
@@ -632,9 +671,9 @@ enum ContainerStore {
                 if handle >= 0 { scan.granted += 1 } else { scan.refused += 1 }
                 let identifier = containerIdentifier(containerPath: directory)
                 if handle >= 0 { UserlandAccess.revoke(handle) }
-                guard let identifier, !identifier.isEmpty,
-                      ContainerBundleCandidateResolver.isValidBundleIdentifier(identifier)
-                else { continue }
+                // As in mergeIntoIndex: the containermanager xattr is the
+                // authoritative label, so no "plausible bundle id" filter here.
+                guard let identifier, !identifier.isEmpty else { continue }
                 scan.index[identifier] = directory
                 notifyDiscovery(identifier: identifier, path: directory)
             }
