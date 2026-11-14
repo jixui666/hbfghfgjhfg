@@ -52,6 +52,17 @@ enum WQV2 {
         }
     }
 
+    /// AAD 里的 path 必须和服务端重算的值逐字节一致。
+    /// 服务端（src/modules/device/service/v2-crypto.ts buildAad）取 `this.ctx.path`
+    /// 后 `.replace(/^\/+/, '')`，也就是把 "/<pathZip>" 变成 "<pathZip>"。
+    /// SecureBox 里的路径常量写没写前导 `/` 取决于构建期 secrets.json，这里统一去掉，
+    /// 免得因为一个斜杠就得到 {"code":401,"message":"消息校验失败"}。
+    static func normalizePath(_ path: String) -> String {
+        var out = path
+        while out.hasPrefix("/") { out.removeFirst() }
+        return out
+    }
+
     private static var infoEnc: String { SecureBox.string(.infoEnc) }
     private static var infoMac: String { SecureBox.string(.infoMac) }
     private static var infoREnc: String { SecureBox.string(.infoREnc) }
@@ -178,7 +189,7 @@ enum WQV2 {
         var out = Data()
         out.append(Data(context.method.uppercased().utf8))
         out.append(0)
-        out.append(Data(context.path.utf8))
+        out.append(Data(normalizePath(context.path).utf8))
         out.append(0)
         out.append(Data(context.appUUID.utf8))
         out.append(0)

@@ -77,6 +77,18 @@ SDK=$(xcrun --sdk iphoneos --show-sdk-path)
 mkdir -p "$ROOT/Generated"
 python3 "$ROOT/tools/gen_secrets.py"
 
+# 1b) 端到端自检：按 SecureBox 的算法把 21 条全部解一遍，并抓"占位常量进包"。
+#     没有 tools/secrets.json 时 gen_secrets.py 会退回 secrets.sample.json，
+#     编出来的包 host / pathZip 全是 api/placeholder/...，装上能跑但一次请求都发不出去。
+#     本地没配置 secrets 只是警告；CI（WQ_REQUIRE_SECRETS=1）直接失败。
+if ! python3 "$ROOT/tools/verify_secrets.py"; then
+    if [[ "${WQ_REQUIRE_SECRETS:-0}" == 1 ]]; then
+        fail "加密常量校验失败：secrets.json 未生效（CI 要求真配置）"
+    fi
+    echo "WARNING: 加密常量校验未通过（包能编，但连不上服务器）。" >&2
+    echo "         配好 tools/secrets.json 或 SECRETS_JSON 后重跑。" >&2
+fi
+
 # 2) 用 swiftc 把 SecureBox + 生成的常量 + ObjC 桥编成 object。
 #    AES-GCM 只有 CryptoKit 有，纯 ObjC 要手写 GHASH，所以这一段走 Swift。
 SWIFT_OBJ="$OUT/WQSecrets.o"

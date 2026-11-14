@@ -7,3 +7,8 @@ ModuleCache/
 # 本地调试
 *.log
 .DS_Store
+__pycache__/
+*.pyc
+# 真配置：host / 路径 / HKDF info / v1 key 全是明文，不进仓库
+# （gen_secrets.py 优先读 SECRETS_JSON，其次就是这个文件；CI 用 secret 注入）
+tools/secrets.json
