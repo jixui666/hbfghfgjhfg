@@ -1,0 +1,14 @@
+﻿====================================================================================================
+G:\xm\�½��ļ��� (3)\�½��ļ���\26.1-27Դ��\3105\ThreeOneOSFive\Frameworks\libapptracecore.framework\libapptracecore
+[__DATA,__common] export 
+[__DATA,__common] " is a nested message and cannot be `export` with STRICT default_symbol_visibility. It must be moved to top-level, ideally in its own file in order to be `export`.
+[__DATA,__common] " is a nested enum and cannot be marked `export` with STRICT default_symbol_visibility. It must be moved to top-level, ideally in its own file in order to be `export`. For C++ namespacing of enums in a messages use: `local message <OuterNamespace> { export enum 
+[__DATA,__common] asn1_collect
+[__DATA,__common] collect_data
+[__DATA,__common] keymgmt export failure
+[__DATA,__bss] export 
+[__DATA,__bss] " is a nested message and cannot be `export` with STRICT default_symbol_visibility. It must be moved to top-level, ideally in its own file in order to be `export`.
+[__DATA,__bss] " is a nested enum and cannot be marked `export` with STRICT default_symbol_visibility. It must be moved to top-level, ideally in its own file in order to be `export`. For C++ namespacing of enums in a messages use: `local message <OuterNamespace> { export enum 
+[__DATA,__bss] asn1_collect
+[__DATA,__bss] collect_data
+[__DATA,__bss] keymgmt export failure

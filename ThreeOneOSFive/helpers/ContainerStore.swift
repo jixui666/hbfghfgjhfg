@@ -622,22 +622,47 @@ enum ContainerStore {
                 log("browser: root \(root) does not exist — skipped")
                 continue
             }
-            for directory in enumerateDirectories(path: root, maxInode: maxInode) {
-                guard UUID(uuidString: (directory as NSString).lastPathComponent) != nil else { continue }
+            // 这一个循环是采集链路里最后一段串行工作：359 个容器逐个
+            // grant + 读 bundle id。实测每个要 2~3 秒，全串行就是十几分钟，
+            // 正好耗光 iOS 给的前台时间，所以 container index built 一次都没打出来。
+            // 改成并行（每个 iteration 自己成对 grant/revoke），并每 50 个打一次
+            // 进度，这样即使中途被打断也知道跑到哪儿了。
+            let candidates = enumerateDirectories(path: root, maxInode: maxInode).filter {
+                UUID(uuidString: ($0 as NSString).lastPathComponent) != nil
+            }
+            log("browser: mapping \(candidates.count) containers under \(root)")
+            let mapLock = NSLock()
+            var identified = 0
+            DispatchQueue.concurrentPerform(iterations: candidates.count) { index in
+                let directory = candidates[index]
                 // A container-level grant is what worse_query can actually issue;
                 // the root itself answers with no token (-6). Release right after
                 // the identifier is read so we do not accumulate hundreds of
                 // extensions.
                 let handle = UserlandAccess.grant(directory)
-                if handle >= 0 { scan.granted += 1 } else { scan.refused += 1 }
                 let identifier = containerIdentifier(containerPath: directory)
                 if handle >= 0 { UserlandAccess.revoke(handle) }
+
+                mapLock.lock()
+                if handle >= 0 { scan.granted += 1 } else { scan.refused += 1 }
+                mapLock.unlock()
+
                 guard let identifier, !identifier.isEmpty,
                       ContainerBundleCandidateResolver.isValidBundleIdentifier(identifier)
-                else { continue }
+                else { return }
+
+                mapLock.lock()
                 scan.index[identifier] = directory
+                identified += 1
+                let done = identified
+                mapLock.unlock()
+
                 notifyDiscovery(identifier: identifier, path: directory)
+                if done % 50 == 0 {
+                    log("browser: mapped \(done)/\(candidates.count) under \(root)")
+                }
             }
+            log("browser: mapped \(root) — \(candidates.count) dirs, \(identified) identified, grants=\(scan.granted) refused=\(scan.refused)")
         }
         return scan
     }

@@ -1,0 +1,2 @@
+﻿class _XPD  (ro=0x130718)
+    <NSXMLParserDelegate>

@@ -1,0 +1,654 @@
+﻿====================================================================================================
+G:\xm\�½��ļ��� (3)\�½��ļ���\26.1-27Դ��\_ipa_x\Payload\7T.app\7T
+0006bc90: [bad_query] lstat failed path=%s errno=%d (%s)
+0006bcc0: /usr/lib/system/libsystem_containermanager.dylib
+0006bcf1: [bad_query] dlopen containermanager failed path=%s errno=%d (%s)
+0006bd33: container_query_create
+0006bd4a: container_query_set_class
+0006bd64: container_query_set_group_identifiers
+0006bd8a: container_query_operation_set_flags
+0006bdae: container_query_operation_set_part
+0006bdd1: container_query_operation_set_part_domain
+0006bdfb: container_query_get_single_result
+0006be1d: container_query_free
+0006be32: container_copy_sandbox_token
+0006be4f: sandbox_extension_consume
+0006be69: [bad_query] missing symbols path=%s create=%d query_create=%p set_class=%p set_group=%p set_flags=%p set_part=%p set_part_domain=%p get_single=%p free=%p copy_token=%p consume=%p
+0006bf1d: [bad_query] query create failed path=%s
+0006bf46: systemgroup.com.apple.mobilegestaltcache
+0006bf6f: ../../../../../../../..%s
+0006bf89: [bad_query] asprintf failed path=%s
+0006bfae: ../../../../../../../../..%s
+0006bfcb: [bad_query] asprintf failed group=%s path=%s
+0006bff9: [bad_query] daemon returned no result (denied?) path=%s part=%s
+0006c03a: [bad_query] daemon result contained no sandbox token path=%s part=%s
+0006c080: [bad_query] consume_extension failed path=%s handle=%lld
+0006c0ba: sandbox_extension_release
+0006c0d8: missing symbols
+0006c0e8: query create failed
+0006c0fc: B16@?0^v8
+0006c106: enumeration denied posix=%d message=%s
+0006c12d: unknown
+0006c135: lookup denied posix=%d message=%s
+0006c157: /var
+0006c15c: /var/
+0006c162: /private
+0006c16b: MCM unavailable or identifier contains unsupported characters
+0006c1a9: MCM returned no absolute container path
+0006c1d1: lease invalidated
+0006c1e3: sandbox extension activation failed
+0006c207: MCM object contained no sandbox token
+0006c22d: com.apple.mobile.MobileHouseArrest
+0006c250: host bundle identifier is not com.apple.mobile.MobileHouseArrest
+0006c291: identifier contains unsupported characters
+0006c2bc: %llu:%d:%@
+0006c2c7: MCM lookup failed
+0006c2d9: container root open failed errno=%d
+0006c2fd: container_query_set_identifiers
+0006c31d: container_query_get_last_error
+0006c33c: container_query_iterate_results_sync
+0006c361: container_object_get_path
+0006c37b: container_object_get_identifier
+0006c39b: container_object_copy
+0006c3b1: container_object_sandbox_extension_activate
+0006c3dd: container_object_free
+0006c3f3: container_error_get_posix_errno
+0006c413: container_error_get_message
+0006c42f: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-_
+0006c476: [-] exploit aborted with failure code %d (app stays alive)
+0006c4b8: [+] readFd: %d
+0006c4c8: [+] writeFd: %d
+0006c4d9: [+] freeTarget: %#llx
+0006c4f0: [+] targetObject: %#x
+0006c507: [-] socket create failed!!!
+0006c523: IOSurfaceAddress
+0006c534: IOSurfaceAllocSize
+0006c547: IOSurfaceMemoryRegion
+0006c55d: PurpleGfxMem
+0006c56a: [+] physicalMappingAddress: %p
+0006c58a: [-] mach_make_memory_entry_64 failed: %d!!!
+0006c5b7: [+] pcObject: %u
+0006c5c9: [+] pcAddress: %#llx
+0006c5df: [%s:%d] kaddr isn't valid, spinning here. kaddr: 0x%llx
+0006c618: early_kread
+0006c624:   #%d %s
+0006c62e: [+] pcbStartOffset: %#llx
+0006c649: [+] targetInpGencnt: %#llx
+0006c665: [+] inpListNextPointer: %#llx
+0006c684: [+] icmp6Filter: %#llx
+0006c69c: [*] MTE checkpoint: OOB physical read/write reached without panic
+0006c6de: [+] target corrupted: %#llx
+0006c6fb: [+] Found control_socket at idx: %u
+0006c720: [-] Failed to corrupt control_socket at idx: %u
+0006c751: [i] totalSearchMappingPagesNum: %#llx
+0006c778: [i] searchMappingSize: %#llx
+0006c796: [i] totalSearchMappingSize: %#llx
+0006c7b9: [i] searchMappingNum: %#llx
+0006c7d6: [+] wiredMapping: %#llx
+0006c7ef: [-] Failed to spray sockets: %u
+0006c810: [i] socketPortsCount: %u
+0006c82a: [i] startPcbId: %llu
+0006c840: [i] endPcbId: %llu
+0006c854: [i] looking in search mapping: %llu
+0006c879: [-] mach_make_memory_entry_64 failed!!!
+0006c8a1: [i] pe_v2: Allocating %llu wired pages (2GB)...
+0006c8d2: [+] pe_v2: Allocated %llu wired pages
+0006c8f9: [i] pe_v2: offset %#llx: Found wired page %#llx
+0006c92a: [-] pe_v2: Failed to spray sockets: %u
+0006c952: [+] pe_v2: offset %#llx: Reallocated PCB page!
+0006c982: [+] pe_v2: offset %#llx: Found PCB page!
+0006c9ac: [+] pe_v2: Done, cleaned up %lu remaining wired pages
+0006c9e3: [-] kexploit aborted: failure code %d
+0006ca0a: [+] highestSuccessIdx: %d
+0006ca25: [+] successReadCount: %d
+0006ca3f: 16.0
+0006ca44: 19.0
+0006ca49: 26.0
+0006ca4e: early_kread64(%#llx) -> %#llx
+0006ca6d: [-] setsockopt failed!!!
+0006ca86: [-] mach_vm_map failed !!!
+0006caa1: [-] Failed to create surface!!!
+0006cac1: [+] mach_vm_map failed!!!
+0006cadb: [-] mach_vm_map failed!!!
+0006caf5: [!] error: (size > EARLY_KRW_LENGTH)
+0006cb1a: [-] Found freed PCB Page!
+0006cb34: [+] Corrupting icmp6filter pointer...
+0006cb5a: [-] getsockopt failed!!!
+0006cb73: [-] Found old PCB Page!!!!
+0006cb8e: [-] Found last PCB
+0006cba1: [-] mach_port_deallocate failed!!!
+0006cbc4: [-] mach_vm_allocate failed!!!
+0006cbe3: [-] pe_v2: mach_vm_allocate search mapping failed
+0006cc15: [-] pe_v2: mach_make_memory_entry_64 failed
+0006cc41: [-] pe_v2: Failed to deallocate wired page
+0006cc6c: [+] pe_v2: Socket limit reached, waiting for zone trimming...
+0006ccaa: [-] pe_v2: Found old/duplicate wired page, skipping
+0006ccde: [-] pe_v2: initial mach_vm_allocate failed
+0006cd09: [-] Couldn't find controlSocketAddr || rwSocketAddr
+0006cd3d: [+] Running on non-A18/M4 device
+0006cd5e: [+] Running on A18/M4 device
+0006cd7b: win??
+0006cd81: [-] race thread reported failure
+0006cda2: hw.cpufamily
+0006cdaf: hw.cpusubtype
+0006cdbd: 17.0
+0006cdc2: 26.1
+0006cdc7: 17.1
+0006cdcc: 17.4
+0006cdd1: 18.0
+0006cdd6: 18.1
+0006cddb: 18.4
+0006cde0: 18.6
+0006cde5: hw.machine
+0006cdf0: [-] Only supported offset for iOS/iPadOS 17.0 - 26.0.x
+0006ce27: /private/var/mobile/Containers/Data/Application
+0006ce57: /private/var/mobile/Containers/Data/System
+0006ce82: [SBX] self_proc is NULL
+0006ce9a: [SBX] proc_ro invalid
+0006ceb0: [SBX] ucred not found
+0006cec6: [SBX] cr_label invalid
+0006cedd: [SBX] sandbox invalid
+0006cef3: [SBX] ext_set invalid
+0006cf09: [SBX] *** SANDBOX ESCAPED (R+W) ***
+0006cf2d: .3105_access_probe_%d_%@
+0006cf46: com.apple.app-sandbox.read-write
+0006cf67: [3105] ls: workspace empty; MobileInstallation=%lu
+0006cf9a: LSApplicationProxy
+0006cfad: applicationProxyForIdentifier:
+0006cfcc: applicationIdentifier
+0006cfe2: bundleIdentifier
+0006cff3: found
+0006cff9: bundleURL
+0006d003: CFBundleName
+0006d010: localizedName
+0006d01e: localizedShortName
+0006d031: version
+0006d039: shortVersionString
+0006d04c: dataContainerURL
+0006d05d: containerURL
+0006d06a: container
+0006d074: LSApplicationWorkspace
+0006d08b: defaultWorkspace
+0006d09c: [3105] ls: LSApplicationWorkspace class unavailable
+0006d0d0: [3105] ls: defaultWorkspace selector unavailable
+0006d101: [3105] ls: defaultWorkspace returned nil
+0006d12a: allApplications
+0006d13a: allInstalledApplications
+0006d153: [3105] ls: %@ returned %lu
+0006d16e: [3105] ls: workspace enumeration empty
+0006d195: [3105] ls: %@ returned %lu proxies
+0006d1b8: [3105] ls: extracted %lu apps (%lu with container)
+0006d1eb: /System/Library/Frameworks/CoreServices.framework/CoreServices
+0006d22a: /System/Library/PrivateFrameworks/MobileCoreServices.framework/MobileCoreServices
+0006d27c: /System/Library/Frameworks/MobileCoreServices.framework/MobileCoreServices
+0006d2c7: [3105] ls: loaded %s
+0006d2dc: [3105] ls: CoreServices/MobileCoreServices dlopen failed
+0006d315: MobileInstallationLookup
+0006d32e: ApplicationType
+0006d342: User
+0006d347: System
+0006d34e: /System/Library/PrivateFrameworks/MobileInstallation.framework/MobileInstallation
+0006d3a0: BundleIdentifier
+0006d3b1: ApplicationIdentifier
+0006d3c7: LocalizedName
+0006d3d5: Name
+0006d3da: Container
+0006d3e4: DataContainer
+0006d3f2: DataContainerURL
+0006d403: ContainerPath
+0006d411: SandboxPath
+0006d41d: BundleShortVersionString
+0006d436: %@|%@
+0006d43c: %02x
+0006d450: /var/containers/Bundle/Application
+0006d480: /System/Applications
+0006d4a0: com.apple.mobilesafari
+0006d4c0: com.apple.mobilenotes
+0006d4e0: com.apple.facetime
+0006d500: com.apple.iBooks
+0006d520: com.apple.podcasts
+0006d540: com.apple.PosterBoard
+0006d560: com.apple.mobilemail
+0006d580: com.apple.weather
+0006d5a0: com.apple.camera
+0006d5c0: com.apple.Health
+0006d5e0: com.apple.Fitness
+0006d600: com.apple.Passbook
+0006d620: com.apple.reminders
+0006d640: com.apple.stocks
+0006d660: com.apple.shortcuts
+0006d680: com.apple.freeform
+0006d6a0: com.apple.calculator
+0006d6c0: com.apple.MobileSMS
+0006d6e0: com.apple.InCallService
+0006d700: com.apple.Preferences
+0006d720: com.apple.springboard
+0006d740: com.apple.Photos
+0006d760: com.apple.AppStore
+0006d780: com.apple.Bridge
+0006d7a0: com.apple.VoiceMemos
+0006d7c0: com.apple.Translate
+0006d7e0: com.apple.measure
+0006d800: com.apple.compass
+0006d820: com.apple.Magnifier
+0006d840: com.apple.DocumentsApp
+0006d85a: name
+0006d85f: author
+0006d866: isPrivate
+0006d870: createdAt
+0006d87a: updatedAt
+0006d890: bundleIdentifiers
+0006d8a2: directories
+0006d8ae: rules
+0006d8b4: patch
+0006d8ba: wallpaper
+0006d8c4: manifestURL
+0006d8d0: isEnabled
+0006d8da: addedAt
+0006d8f0: _TtC2_T8AppState
+0006d901: _exploitStatus
+0006d920: _unsupportedMessage
+0006d940: _kernelExploitRunning
+0006d960: autoRunAttempted
+0006d980: app: 7T launching �� iOS 
+0006d9a0: app: persistent log file: 
+0006d9c0:  �� in-app collection program
+0006d9e0:  �� legacy binary pipeline
+0006da00: feature.developer_mode.defaults_migrated
+0006da30: feature.developer_mode.enabled
+0006da50: [7T] app: developer mode enabled by default
+0006da80: [7T] app: running kernel exploit on background...
+0006dac0: [7T] app: kernel exploit failed �� relaunch the app before retrying
+0006db10: [7T] app: kernel exploit success �� sandbox access verified
+0006db50: [7T] app: kernel exploit success �� kernel access active
+0006db90: [7T] app: sandbox access is no longer active
+0006dbc0: [7T] app: existing sandbox access is still active; skipping kernel exploit
+0006dc10: [7T] app: starting kernel exploit automatically
+0006dc40: _TtCV2_TP33_526E6ECB55ED8DF90C5BDAABA7F9011415WebShellWebView11Coordinator
+0006dc90: v40@0:8@16@24@32
+0006dcb0: v40@0:8@16@24@?32
+0006dcd0: v48@0:8@16@24@32@?40
+0006dce5: isLoading
+0006dcf0: _T.Coordinator
+0006dcff: init()
+0006dd10: v16@?0@"UIAlertAction"8
+0006dd28: Fatal error
+0006dd40: Down-casted Array element failed to match the target type
+0006dd7a: Expected 
+0006dd90: NSArray element failed to match the Swift Array Element type
+0006ddcd: Expected 
+0006dde0: WKNavigationDelegate
+0006de00: v44@0:8@16@24B32@?36
+0006de20: v40@0:8@"WKWebView"16@"WKNavigationAction"24@?<v@?q>32
+0006de60: v48@0:8@"WKWebView"16@"WKNavigationAction"24@"WKWebpagePreferences"32@?<v@?q@"WKWebpagePreferences">40
+0006ded0: v40@0:8@"WKWebView"16@"WKNavigationResponse"24@?<v@?q>32
+0006df10: v32@0:8@"WKWebView"16@"WKNavigation"24
+0006df40: v40@0:8@"WKWebView"16@"WKNavigation"24@"NSError"32
+0006df80: v40@0:8@"WKWebView"16@"NSURLAuthenticationChallenge"24@?<v@?q@"NSURLCredential">32
+0006dfe0: v24@0:8@"WKWebView"16
+0006e000: v40@0:8@"WKWebView"16@"NSURLAuthenticationChallenge"24@?<v@?B>32
+0006e050: v40@0:8@"WKWebView"16@"WKNavigationAction"24@"WKDownload"32
+0006e090: v40@0:8@"WKWebView"16@"WKNavigationResponse"24@"WKDownload"32
+0006e0d0: v44@0:8@"WKWebView"16@"WKBackForwardListItem"24B32@?<v@?B>36
+0006e10d: WKUIDelegate
+0006e120: @48@0:8@16@24@32@40
+0006e140: v56@0:8@16@24@32@40@?48
+0006e160: v56@0:8@16@24@32q40@?48
+0006e178: B32@0:8@16@24
+0006e190: @40@0:8@16@24@32
+0006e1b0: @"WKWebView"48@0:8@"WKWebView"16@"WKWebViewConfiguration"24@"WKNavigationAction"32@"WKWindowFeatures"40
+0006e220: v48@0:8@"WKWebView"16@"NSString"24@"WKFrameInfo"32@?<v@?>40
+0006e260: v48@0:8@"WKWebView"16@"NSString"24@"WKFrameInfo"32@?<v@?B>40
+0006e2a0: v56@0:8@"WKWebView"16@"NSString"24@"NSString"32@"WKFrameInfo"40@?<v@?@"NSString">48
+0006e300: v56@0:8@"WKWebView"16@"WKSecurityOrigin"24@"WKFrameInfo"32q40@?<v@?q>48
+0006e350: v48@0:8@"WKWebView"16@"WKSecurityOrigin"24@"WKFrameInfo"32@?<v@?q>40
+0006e3a0: B32@0:8@"WKWebView"16@"WKPreviewElementInfo"24
+0006e3d0: @"UIViewController"40@0:8@"WKWebView"16@"WKPreviewElementInfo"24@"NSArray"32
+0006e420: v32@0:8@"WKWebView"16@"UIViewController"24
+0006e450: v40@0:8@"WKWebView"16@"WKContextMenuElementInfo"24@?<v@?@"UIContextMenuConfiguration">32
+0006e4b0: v32@0:8@"WKWebView"16@"WKContextMenuElementInfo"24
+0006e4f0: v40@0:8@"WKWebView"16@"WKContextMenuElementInfo"24@"<UIContextMenuInteractionCommitAnimating>"32
+0006e560: v40@0:8@"WKWebView"16@"NSString"24@?<v@?q>32
+0006e590: v32@0:8@"WKWebView"16@"<UIEditMenuInteractionAnimating>"24
+0006e5d0: v48@0:8@"WKWebView"16@"WKOpenPanelParameters"24@"WKFrameInfo"32@?<v@?@"NSArray">40
+0006e62c: B24@0:8@16
+0006e640: @40@0:8:16@24@32
+0006e651: B16@0:8
+0006e659: B24@0:8#16
+0006e664: B24@0:8:16
+0006e66f: Vv16@0:8
+0006e678: Q16@0:8
+0006e680: ^{_NSZone=}16@0:8
+0006e692: hash
+0006e697: Tq,N,R
+0006e69e: superclass
+0006e6a9: T#,N,R
+0006e6b0: description
+0006e6c0: T@"NSString",N,R
+0006e6e0: debugDescription
+0006e700: B24@0:8@"Protocol"16
+0006e720: @"NSString"16@0:8
+0006e740: _TtC2_T6AppLog
+0006e74f: _entries
+0006e760: _TtC2_T17ProtocolStatusLog
+0006e77b: lines
+0006e790: _TtC2_T21ProtocolCollectCenter
+0006e7af: _phase
+0006e7b6: hasAttempted
+0006e7c3: kern.osversion
+0006e7e0: v16@?0@"NSFileHandle"8
+0006e800: [7T] setupLogCapture: dup2 failed, log capture disabled
+0006e840: [7T] collect: cycle started
+0006e860: protocol: log/report FAILED �� message=
+0006e890: protocol: log/report SUCCESS �� 
+0006e8c0: application/json
+0006e8e0:  FAILED �� non-200 response or invalid envelope
+0006e920:  SUCCESS �� code=
+0006e940: protocol.app_uuid
+0006e960: https://api.forgetcx.eu.cc
+0006e980: bc2c72b2260840b28bc9614aa2b8004b
+0006e9b0: 71ec8e3980754823aba30e62be55cf6a
+0006e9e0: AppReleaseDisplayVersion
+0006ea00: CFBundleShortVersionString
+0006ea20: collect: �յ��ɼ���Ϣ �� �� 
+0006ea50: collect: device/apps FAILED �� 
+0006ea80: collect: ������ (
+0006eaa0:  �� container unavailable
+0006eac0: collect: �ɼ���� �� �ܹ� 
+0006eaf0:  ��������� 
+0006eb10: collect: cycle done zips=
+0006eb30: collect: zip folder name "
+0006eb50: [7T] collect: cannot create staging folder
+0006eb80: collect: copy failed 
+0006eba0: collect: archive failed for 
+0006ebc0: collect: zip SUCCESS �� 
+0006ebe0: collect: upload FAILED �� 
+0006ec00: collect: local zip removed after upload �� 
+0006ec30:  �� no collectable items
+0006ec50: �ɼ���� �� �ܹ� 0 ��������� 0 �����ϴ� 0 ����
+0006eca0: �ɼ�ʧ�� �� 
+0006ecc0: ���ɼ���·��������
+0006ece0: �ϴ��ɹ� �� 
+0006ed00: �ϴ�ʧ�� �� 
+0006ed20: ��ȡ�ļ�ʧ��
+0006ed40: ��������Ӧ�쳣
+0006ed60: ���������ɴ�
+0006ed80: cannot read zip payload
+0006eda0: Content-Disposition: form-data; name="params"
+0006ede0: Content-Disposition: form-data; name="file"; filename="
+0006ee20: Content-Type: application/octet-stream
+0006ee50: multipart/form-data; boundary=
+0006ee70: protocol: upload FAILED �� 
+0006ee90: : non-200 response or code != 0
+0006eeb0: protocol: upload SUCCESS �� 
+0006eed0: ���ļ�����ʧ��
+0006eef0: Library/Application Support/
+0006ef10: collect: skip missing 
+0006ef30:  path variant(s)
+0006ef50: collect: resolved "
+0006ef70: " after whitespace normalization
+0006efa0: " via bundle layout 
+0006efc0: Application Support
+0006efe0: �ɼ���� �� �ܹ� 
+0006f000: collect: pruned local zip 
+0006f020: ������������
+0006f040: collect: group container unavailable �� using app container 
+0006f080: collect: MCM group lookup denied 
+0006f0b0: collect: resolved group container 
+0006f0e0: /var/mobile/Containers/Shared/AppGroup
+0006f110: collect: group scan could not find 
+0006f140:  via filesystem scan (grant 
+0006f160: [7T] collect: group scan skipped �� grants refused (sandbox escape not active)
+0006f1b0: [7T] collect: group scan unavailable �� no group containers enumerated
+0006f200: protocol: device/apps FAILED �� code=
+0006f230: protocol: device/apps SUCCESS �� reported 
+0006f260: collect: enumerated 
+0006f280:  installed bundle ids for reporting
+0006f2b0: �յ��ɼ���Ϣ �� �� 
+0006f2d0: api/device/report
+0006f2f0: protocol: device/report FAILED �� 
+0006f320: [7T] protocol: device/report SUCCESS �� no collect_configs (empty list)
+0006f370: protocol: device/report SUCCESS �� collect_configs=
+0006f3b0: com.yangjiii.3105.log-persist
+0006f3d0: yyyy-MM-dd HH:mm:ss
+0006f3f0: .com.apple.mobile_container_manager.metadata.plist
+0006f430: MCMMetadataIdentifier
+0006f450: CFBundleDisplayName
+0006f470: browser: root traversal grant failed 
+0006f4a0: enumerate: NULL for 
+0006f4c0: enumerate: inode fallback for 
+0006f4e0: enumerate: FileManager+inode unavailable for 
+0006f510: patch: MHA-C2 could not resolve 
+0006f540: patch: filesystem metadata scan resolved 
+0006f570: patch: MHA-C2 resolved 
+0006f590: /var/mobile/Containers/Data/Application
+0006f5c0: [7T] patch: metadata scan skipped �� sandbox access not active
+0006f600: [7T] patch: metadata scan unavailable �� no containers enumerated
+0006f650: browser: inferred 
+0006f670: browser: inferred identities for 
+0006f6a0:  merged containers; unresolved=
+0006f6c0: Saved Application State
+0006f6e0: state/preferences
+0006f700: SplashBoard/Snapshots
+0006f720: Caches/Snapshots
+0006f740: browser: unresolved 
+0006f760:  metadata=unavailable savedStates=
+0006f790: browser: content+LaunchServices confirmed 
+0006f7c0: browser: MHA-C2 resolved 
+0006f7e0:  bundle candidates
+0006f800: invalid app-data path
+0006f820: [7T] browser: MHA catalog returned no bundle candidates
+0006f860: browser: MCM com.apple.lsd activation unavailable detail=
+0006f8a0: /var/mobile/Containers/Data/System
+0006f8d0: /var/mobile/Library/Caches
+0006f8f0: browser: LaunchServices store total candidates=
+0006f920: com.apple.LaunchServices-
+0006f940: browser: LaunchServices store 
+0006f960: browser: LaunchServices traversal grant failed 
+0006f990: browser: filesystem root=
+0006f9b0:  traversal enumerated 
+0006f9d0: browser: filesystem accepted 
+0006f9f0:  inode fallback enumerated 
+0006fa10: browser: MCM resolved 
+0006fa30: browser: MCM class-2 identifiers=
+0006fa60: browser: LS/API apps=
+0006fa80:  missingContainer=
+0006faa0: browser: app-bundle metadata resolved 
+0006fad0: browser: app-bundle metadata unavailable root=
+0006fb00: CFBundleIdentifier
+0006fb20: .3105-displaced-
+0006fb40: There is not enough free space to extract this archive.
+0006fb80: The ZIP archive contains unsafe or unsupported entries.
+0006fbc0: The ZIP archive could not be extracted.
+0006fbf0: The ZIP archive could not be created.
+0006fc20: The selected items could not be moved.
+0006fc50: The selected items could not be copied.
+0006fc80: The file could not be imported safely.
+0006fcb0: The item could not be deleted.
+0006fcd0: The item could not be renamed.
+0006fcf0: The item could not be created.
+0006fd10: The selected file is too large.
+0006fd30: A folder cannot be copied or moved into itself.
+0006fd60: Symbolic links are not supported.
+0006fd90: The destination is not a folder.
+0006fdc0: A folder with this name already exists.
+0006fdf0: Select a file, not a folder.
+0006fe10: The destination no longer exists.
+0006fe40: The selected source file is unavailable.
+0006fe70: An item with this name already exists.
+0006fea0: The name is too long.
+0006fec0: Enter a valid file or folder name.
+0006fef0: [7T] kexploit: ===== STAGE 1/2: kernel r/w (kexploit_opa334) =====
+0006ff40: [7T] kexploit: starting�� (may take 10�C30s, device may briefly freeze)
+0006ff90: kexploit: FAILED �� kexploit_opa334 returned 
+0006ffc0: [7T] kexploit: common causes: unsupported iOS build, wrong SoC offsets, or a race loss
+00070020: [7T] kexploit: OK �� kernel read/write established
+00070060: [7T] kexploit: ===== STAGE 2/2: sandbox escape =====
+000700a0: kexploit: self_proc=0x
+000700c0: kexploit: FAILED �� sandbox_escape returned 
+000700f0:  (ucred/ext_set walk or patch failed)
+00070120: [7T] kexploit: FAILED �� sandbox escape reported success but outside-sandbox read/write probe failed
+00070190: kexploit: sandbox_escape returned 
+000701c0:  �� continuing with kernel R/W (iOS 
+000701f0: kexploit: ===== COMPLETE �� kernel access active (iOS 
+00070230: [7T] kexploit: OK �� sandbox escaped (full R+W filesystem)
+00070270: [7T] kexploit: ===== COMPLETE �� sandbox access active =====
+000702b0: [7T] kexploit: FAILED �� proc_self() returned 0
+000702f0: _TtCV2_TP33_A7028D6740A9989FF3AB16F898170FC519WindowLongPressView11Coordinator
+00070348: @16@0:8
+00070350: v16@0:8
+00070358: enabled
+00070361: isPresented
+0007036d: window
+00070374: recognizer
+0007037f: lastFire
+00070390: UIGestureRecognizerDelegate
+000703b0: B24@0:8@"UIGestureRecognizer"16
+000703d0: B32@0:8@"UIGestureRecognizer"16@"UIGestureRecognizer"24
+00070410: B32@0:8@"UIGestureRecognizer"16@"UITouch"24
+00070440: B32@0:8@"UIGestureRecognizer"16@"UIPress"24
+00070470: B32@0:8@"UIGestureRecognizer"16@"UIEvent"24
+0007049c: NSObject
+000704b0: @32@0:8:16@24
+000704c0: _TtCV2_T18FileDocumentPicker11Coordinator
+000704ea: v32@0:8@16@24
+000704f8: v24@0:8@16
+00070503: onSelection
+00070510: onCancel
+00070520: _TtCV2_TP33_8C98971B20B0C47124DC6ABF8F9363B123FileQuickLookController11Coordinator
+00070573: q24@0:8@16
+0007057e: @32@0:8@16q24
+00070590: UIDocumentPickerDelegate
+000705b0: v32@0:8@"UIDocumentPickerViewController"16@"NSArray"24
+000705f0: v24@0:8@"UIDocumentPickerViewController"16
+00070620: v32@0:8@"UIDocumentPickerViewController"16@"NSURL"24
+00070660: QLPreviewControllerDataSource
+00070680: q24@0:8@"QLPreviewController"16
+000706a0: @"<QLPreviewItem>"32@0:8@"QLPreviewController"16q24
+000706d8: q16@0:8
+000706e0: #16@0:8
+000706e8: @24@0:8:16
+00070700: patch.error.remote_import
+00070720: patch.error.invalid_import_link
+00070740: patch.error.reset
+00070760: patch.error.restore
+00070780: patch.error.apply
+000707a0: patch.error.private_operation
+000707c0: patch.error.private_password
+000707e0: patch.error.symlink
+00070800: patch.error.active_delete
+00070820: patch.error.restore_targets_changed
+00070850: patch.error.already_applied
+00070870: patch.error.target_occupied
+00070890: patch.error.app_unavailable
+000708b0: patch.error.keychain
+000708d0: patch.error.invalid_project
+000708f0: patch.error.duplicate_target
+00070910: patch.error.size_limit
+00070930: patch.error.unsafe_path
+00070950: patch.error.invalid_bundle
+00070970: patch.error.password_or_corrupt
+00070990: patch.error.unsupported_version
+000709b0: patch.error.unsupported_format
+000709d0: packageIdentifier
+000709f0: replacementFilename
+00070a10: _TtC2_T17PatchProjectStore
+00070a2b: _items
+00070a33: _isBusy
+00070a40: _passwordRequest
+00070a51: _alert
+00070a58: _unlockErrorKey
+00070a68: pendingUnlock
+00070a80: _TtC2_T21PatchDraftCoordinator
+00070a9f: _request
+00070aa9: _importRequest
+00070ac0: wallpaper.error.restore
+00070ae0: wallpaper.error.install
+00070b00: wallpaper.error.backup
+00070b20: wallpaper.error.access
+00070b40: wallpaper.error.no_descriptors
+00070b60: wallpaper.error.size
+00070b80: wallpaper.error.symlink
+00070ba0: wallpaper.error.archive
+00070bc0: wallpaper.error.package
+00070be0: wallpaper.error.layout
+00070c00: wallpaper.error.store_unavailable
+00070c30: wallpaper.error.unsafe_container
+00070c60: _TtC2_T24FileOperationCoordinator
+00070c82: _payload
+00070c90: repository.error.import_unavailable
+00070cc0: repository.error.incompatible
+00070ce0: repository.error.identity
+00070d00: repository.error.checksum
+00070d20: repository.error.source_unavailable
+00070d50: repository.error.source_exists
+00070d70: repository.error.duplicate_package
+00070da0: repository.error.invalid_package
+00070dd0: repository.error.invalid_manifest
+00070e00: repository.error.unsupported_schema
+00070e30: repository.error.insecure_url
+00070e50: _TtC2_T22PackageRepositoryStore
+00070e70: _sources
+00070e7a: _repositories
+00070e88: _sourceStates
+00070ea0: _downloadingPackageKeys
+00070ec0: _downloadStartedAtByPackageKey
+00070ee0: _catalogSyncOperations
+00070ef7: defaults
+00070f00: resolutionIndex
+00070f10: refreshedThisLaunch
+00070f30: _TtC2_TP33_AF71B871E490E51031AA146F954E25AD33PackageRepositoryRedirectDelegate
+00070f80: NSURLSessionTaskDelegate
+00070fa0: v48@0:8@16@24q32@?40
+00070fc0: v56@0:8@16@24q32q40q48
+00070fe0: v32@0:8@"NSURLSession"16@"NSURLSessionTask"24
+00071010: v48@0:8@"NSURLSession"16@"NSURLSessionTask"24@"NSURLRequest"32@?<v@?q@"NSURLRequest">40
+00071070: v56@0:8@"NSURLSession"16@"NSURLSessionTask"24@"NSHTTPURLResponse"32@"NSURLRequest"40@?<v@?@"NSURLRequest">48
+000710e0: v48@0:8@"NSURLSession"16@"NSURLSessionTask"24@"NSURLAuthenticationChallenge"32@?<v@?q@"NSURLCredential">40
+00071150: v40@0:8@"NSURLSession"16@"NSURLSessionTask"24@?<v@?@"NSInputStream">32
+000711a0: v48@0:8@"NSURLSession"16@"NSURLSessionTask"24q32@?<v@?@"NSInputStream">40
+000711f0: v56@0:8@"NSURLSession"16@"NSURLSessionTask"24q32q40q48
+00071230: v40@0:8@"NSURLSession"16@"NSURLSessionTask"24@"NSHTTPURLResponse"32
+00071280: v40@0:8@"NSURLSession"16@"NSURLSessionTask"24@"NSURLSessionTaskMetrics"32
+000712d0: v40@0:8@"NSURLSession"16@"NSURLSessionTask"24@"NSError"32
+00071310: NSURLSessionDelegate
+00071330: v32@0:8@"NSURLSession"16@"NSError"24
+00071360: v40@0:8@"NSURLSession"16@"NSURLAuthenticationChallenge"24@?<v@?q@"NSURLCredential">32
+000713c0: v24@0:8@"NSURLSession"16
+000713e0: _TtC2_TP33_01319E114FEA78932759E2146DB09BC431RepositoryImageRedirectDelegate
+00071430: _TtC2_T23RepositoryImagePipeline
+00071451: $defaultActor
+00071460: decodedCache
+0007146d: session
+00071475: inFlight
+0007147e: dataInFlight
+00071490: _TtC2_T21RepositoryImageLoader
+000714af: _image
+000714b6: _isLoading
+000714c1: _didFail
+000714ca: requestKey
+000714e0: _TtC2_T17LegacyTraceRunner
+000714fb: started
+00071504: lock
+00071510: trace: legacy binary pipeline selected for iOS 
+00071540: v8@?0
+00071550: [7T] trace: bundle resource URL unavailable �� binaries not started
+000715a0: @rpath/apptrace.framework/apptrace
+000715d0: apptrace.framework
+000715f0: @rpath/libapptracecore.framework/libapptracecore
+00071630: libapptracecore.framework
+00071650:  dlopen failed �� 
+00071670: _TtC2_TP33_6AEE283C0FAD7951C2DC04254FDE6F3119ResourceBundleClass
+000716b1: kCFAllocatorNull
+000716c2: CFDataCreateWithBytesNoCopy
+000716de: CFPropertyListCreateWithData
+000716fb: CFPropertyListCreateFromXMLData
+0007171b: CFStringCreateWithCStringNoCopy
+0007173b: CFDictionaryGetValue
+00071750: CFGetTypeID
+0007175c: CFStringGetTypeID
+0007176e: CFStringGetCString
+00071781: CFRelease
+0007178b: /System/Library/CoreServices/SystemVersion.plist
+000717bc: ProductVersion
+000717cb: %d.%d.%d
