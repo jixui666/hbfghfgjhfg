@@ -1092,7 +1092,7 @@ enum ProtocolCollectService {
         if index.isEmpty, repairedGroups > 0 {
             log("collect: index empty after repair (\(repairedGroups) group(s) usable) — rebuilding once")
             await reportStage("阶段 3/6：首轮枚举为空，复原访问缓存后重建索引")
-            await Task.detached(priority: .userInitiated) {
+            _ = await Task.detached(priority: .userInitiated) {
                 UserlandAccess.repairAccessCache()
             }.value
             ContainerStore.invalidateContainerIndex()

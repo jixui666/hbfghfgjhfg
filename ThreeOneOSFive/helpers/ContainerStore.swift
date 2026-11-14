@@ -371,7 +371,7 @@ enum ContainerStore {
         return fresh
     }
 
-    static func containerIndexIsBuilding: Bool {
+    static var containerIndexIsBuilding: Bool {
         indexLock.lock()
         defer { indexLock.unlock() }
         return indexBuildInProgress
