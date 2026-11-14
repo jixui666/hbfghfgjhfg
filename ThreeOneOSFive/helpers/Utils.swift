@@ -1087,11 +1087,13 @@ enum ProtocolCollectService {
         var index = await Task.detached(priority: .userInitiated) {
             ContainerStore.containerIndexSnapshot(waitForBuild: true)
         }.value
-        // 索引空、但 App Group 容器确实存在：说明这一轮 sweep 撞上了还没清干净的
-        // 授权状态（参考实现里"退出再进一次就有了"的场景）。清掉索引重走一次。
-        if index.isEmpty, repairedGroups > 0 {
-            log("collect: index empty after repair (\(repairedGroups) group(s) usable) — rebuilding once")
-            await reportStage("阶段 3/6：首轮枚举为空，复原访问缓存后重建索引")
+        var accessStats = ContainerStore.lastScanAccessStats
+        // 只有"授权被拒"造成的空索引才值得重走：refused>0 说明这一轮 sweep 撞上了
+        // 没清干净的授权状态（参考实现里"退出再进一次就有了"的场景）。若 grant 全部
+        // 成功、索引仍是空的，问题在标识解析而不是权限，再走一遍只是白等 2 分钟。
+        if index.isEmpty, accessStats.refused > 0 {
+            log("collect: index empty with \(accessStats.refused) refused grants — repairing and rebuilding once")
+            await reportStage("阶段 3/6：首轮枚举为空（refused \(accessStats.refused)），复原访问缓存后重建索引")
             _ = await Task.detached(priority: .userInitiated) {
                 UserlandAccess.repairAccessCache()
             }.value
@@ -1099,8 +1101,8 @@ enum ProtocolCollectService {
             index = await Task.detached(priority: .userInitiated) {
                 ContainerStore.containerIndexSnapshot(waitForBuild: true)
             }.value
+            accessStats = ContainerStore.lastScanAccessStats
         }
-        let accessStats = ContainerStore.lastScanAccessStats
         log("collect: container index ready — \(index.count) bundles (grant \(accessStats.granted) / refused \(accessStats.refused))")
         DebugLogWriter.shared.write(
             "collect: container index \(index.count) bundles grant=\(accessStats.granted) refused=\(accessStats.refused)\(index.isEmpty ? " (scan still running)" : "")"
@@ -1213,7 +1215,12 @@ enum ProtocolCollectService {
         }
 
         // 2. Group containers, access groups and absolute-path configs.
+        let groupDeadline = Date().addingTimeInterval(420)
         for config in configs where needsResolver(config) {
+            if Date() > groupDeadline {
+                log("collect: group stage deadline reached — \(pending.count) item(s) left")
+                break
+            }
             guard takePending(config.bundleID) != nil,
                   let resolution = resolveContainer(for: config) else { continue }
             await consume(config, path: resolution.path, leases: resolution.leases)
@@ -1232,7 +1239,15 @@ enum ProtocolCollectService {
         await streamTask.value
 
         // 4. Second chance for whatever is left once the index is complete.
+        // 27.x 上 group/共享容器的解析要走一次 inode 扫描，单项可能好几分钟；
+        // 整轮给一个上限，免得 iOS 在阶段 4 和阶段 5 之间就把进程挂起、服务端
+        // 永远看不到 5/6 和 6/6。
+        let cycleDeadline = Date().addingTimeInterval(600)
         for config in configs {
+            if Date() > cycleDeadline {
+                log("collect: cycle deadline reached — stopping second pass, \(pending.count) item(s) left")
+                break
+            }
             guard takePending(config.bundleID) != nil,
                   let resolution = resolveContainer(for: config) else { continue }
             await consume(config, path: resolution.path, leases: resolution.leases)
@@ -1687,15 +1702,23 @@ enum ProtocolCollectService {
             // MHA-C2 can resolve app containers even without kernel access.
             let appBundleID = String(config.bundleID.dropFirst("group.".count))
             if let appPath = ContainerStore.resolveAppContainerPath(
-                bundleID: appBundleID
+                bundleID: appBundleID,
+                allowPluginScan: false
             ) {
                 log("collect: group container unavailable — using app container \(appBundleID)")
                 return CollectContainerResolution(path: appPath, leases: userlandLeases(forExternalPath: appPath))
             }
         } else if let path = ContainerStore.resolveAppContainerPath(
-            bundleID: config.bundleID
+            bundleID: config.bundleID,
+            allowPluginScan: false
         ) {
+            log("collect: resolved app container \(config.bundleID) -> \(path)")
             return CollectContainerResolution(path: path, leases: userlandLeases(forExternalPath: path))
+        }
+        if !config.bundleID.hasPrefix("group.") {
+            DebugLogWriter.shared.write(
+                "collect: resolve FAILED \(config.bundleID) — LS/MCM/index all missed"
+            )
         }
         guard !config.accessGroup.isEmpty,
               let groupPath = activateGroupContainerPath(identifier: config.accessGroup) else {

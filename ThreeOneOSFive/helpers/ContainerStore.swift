@@ -125,7 +125,7 @@ enum ContainerStore {
         "com.apple.compass", "com.apple.Magnifier", "com.apple.DocumentsApp"
     ]
 
-    static func resolveAppContainerPath(bundleID: String) -> String? {
+    static func resolveAppContainerPath(bundleID: String, allowPluginScan: Bool = true) -> String? {
         // The index is keyed by containermanager's own container label, so an
         // exact hit is authoritative whatever the identifier looks like — some
         // real labels carry "_" or non-ASCII and would fail the bundle-id shape
@@ -155,8 +155,15 @@ enum ContainerStore {
             retainAccess(canonical)
             return canonical
         }
-        log("patch: LS proxy has no container for \(bundleID)")
-        DebugLogWriter.shared.write("patch: LS proxy has no container for \(bundleID)")
+        // Say what LaunchServices actually answered: found=NO means the proxy has
+        // no such identity at all (restricted), found=YES without "container"
+        // means the container URL itself is withheld — different fixes.
+        let lsInfo = appInfoForBundleID(bundleID) as? [String: Any] ?? [:]
+        let lsKeys = lsInfo.keys.sorted().joined(separator: ",")
+        log("patch: LS proxy has no container for \(bundleID) (found=\(lsInfo["found"] != nil), keys=[\(lsKeys)])")
+        DebugLogWriter.shared.write(
+            "patch: LS proxy no container for \(bundleID) found=\(lsInfo["found"] != nil) keys=[\(lsKeys)]"
+        )
 
         if let path = MCMActivateContainerPath(2, bundleID, false, &lookupError),
            isApplicationContainerPath(path) {
@@ -172,7 +179,10 @@ enum ContainerStore {
         // iOS 26.6.2+ / 27.x: no kernel stage, so resolve through the userland
         // extension layer first (anchor + relative part-domain sweep) and only
         // then fall back to the inode/metadata walk.
-        if let path = resolveAppContainerPathByMetadataScan(bundleID: bundleID) {
+        if let path = resolveAppContainerPathByMetadataScan(
+            bundleID: bundleID,
+            allowPluginScan: allowPluginScan
+        ) {
             log("patch: filesystem metadata scan resolved \(bundleID)")
             return path
         }
@@ -205,7 +215,10 @@ enum ContainerStore {
         return nil
     }
 
-    static func resolveAppContainerPathByMetadataScan(bundleID: String) -> String? {
+    static func resolveAppContainerPathByMetadataScan(
+        bundleID: String,
+        allowPluginScan: Bool = true
+    ) -> String? {
         // Index lookup never blocks: if a walk is in flight the caller gets the
         // current snapshot (possibly the one preloaded from disk) and the bundle
         // is retried on the next foreground instead of stalling the cycle.
@@ -216,8 +229,10 @@ enum ContainerStore {
         }
         guard index.isEmpty else {
             // Not an app container: it may live in an extension/daemon container,
-            // which is indexed lazily (and only once).
-            if let path = pluginContainerIndexSnapshot()[bundleID], isContainerPath(path) {
+            // which is indexed lazily (and only once). That walk costs minutes on
+            // 27.x, so the collection path opts out of it.
+            if allowPluginScan,
+               let path = pluginContainerIndexSnapshot()[bundleID], isContainerPath(path) {
                 retainAccess(path)
                 return ContainerDiscoveryMerger.canonicalPath(path)
             }
@@ -243,7 +258,10 @@ enum ContainerStore {
         }
 
         // Fallback scan (index stale after a fresh install / container move).
-        for root in metadataScanRoots {
+        // The plugin / daemon roots only hold extension containers and cost
+        // minutes to walk on 27.x, so the collection path scans app data only.
+        let roots = allowPluginScan ? metadataScanRoots : appDataRoots
+        for root in roots {
             let dirs = enumerateDirectoriesWithTraversalGrant(path: root)
             guard !dirs.isEmpty else { continue }
             for dir in dirs {
@@ -810,11 +828,70 @@ enum ContainerStore {
 
     /// Bundle id MCM stamped on a container: the containermanager xattr first
     /// (what worse_query and Filza read), then the metadata plist.
+    ///
+    /// On 27.2.1 both can come back empty even after a successful grant — that is
+    /// how the sweep ends up with "358 directories, 0 identifiers" and an empty
+    /// index. The last resort asks for an extension on the plist itself, and the
+    /// first few failures dump what the kernel actually said (xattr errno, plist
+    /// size) into `Documents/log2`, which is the only way to tell "denied" from
+    /// "key renamed" without a Mac attached.
     static func containerIdentifier(containerPath: String) -> String? {
         if let identifier = UserlandAccess.containerIdentifier(containerPath), !identifier.isEmpty {
             return identifier
         }
-        return readContainerMetadata(containerPath: containerPath)?.bundleID
+        if let metadata = readContainerMetadata(containerPath: containerPath),
+           !metadata.bundleID.isEmpty {
+            return metadata.bundleID
+        }
+
+        // Second attempt with an extension that names the plist file itself: a
+        // container-level grant covers the children only once the sandbox
+        // resolved the path, which is not guaranteed for the metadata file.
+        let plistPath = metadataPath(for: containerPath)
+        let handle = UserlandAccess.grant(plistPath)
+        if handle >= 0 {
+            defer { UserlandAccess.revoke(handle) }
+            if let metadata = readContainerMetadata(containerPath: containerPath),
+               !metadata.bundleID.isEmpty {
+                DebugLogWriter.shared.write("browser: identity for \((containerPath as NSString).lastPathComponent) came from the plist grant")
+                return metadata.bundleID
+            }
+        }
+
+        diagnoseMissingIdentity(containerPath, plistPath: plistPath)
+        return nil
+    }
+
+    private static let identityDiagLock = NSLock()
+    private static var identityDiagCount = 0
+
+    /// Logs the first few containers whose identity cannot be read, with the raw
+    /// kernel answers, then stays quiet (a 358-container sweep would otherwise
+    /// flood the log).
+    private static func diagnoseMissingIdentity(_ containerPath: String, plistPath: String) {
+        identityDiagLock.lock()
+        let index = identityDiagCount
+        if index < 8 { identityDiagCount += 1 }
+        identityDiagLock.unlock()
+        guard index < 8 else { return }
+
+        var buffer = [UInt8](repeating: 0, count: 512)
+        let read = getxattr(containerPath, "com.apple.containermanager.identifier",
+                            &buffer, buffer.count - 1, 0, 0)
+        let xattrErrno = errno
+        let xattrValue = read > 0 ? String(decoding: buffer[0..<Int(read)], as: UTF8.self) : "-"
+        let plistSize: Int64
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: plistPath) {
+            plistSize = (attrs[.size] as? NSNumber)?.int64Value ?? -1
+        } else {
+            plistSize = -1
+        }
+        let entries = (try? FileManager.default.contentsOfDirectory(atPath: containerPath).count) ?? -1
+        let line = "diag id \((containerPath as NSString).lastPathComponent.prefix(8)):"
+            + " xattr=\(read)/errno=\(xattrErrno) value=\(xattrValue)"
+            + " plist=\(plistSize)B entries=\(entries)"
+        log("browser: \(line)")
+        DebugLogWriter.shared.write(line)
     }
 
     /// True for any path that is a direct child of one of the scanned roots
