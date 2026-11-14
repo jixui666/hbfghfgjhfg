@@ -8,6 +8,7 @@
 //  This app is GPL-3.0-or-later as well (see LICENSE).
 //
 
+#import "WQShellView.h"
 #import "WQCollector.h"
 #import <UIKit/UIKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
@@ -4513,6 +4514,12 @@ static UIImage *wq_language_flag(NSString *code)
 
 #pragma mark - App
 
+/* Shell 加载失败时退回的原生入口：WQRootViewController 包在导航控制器里。 */
+UIViewController *WQMakeLegacyRootViewController(void)
+{
+    return [[WQNavigationController alloc] initWithRootViewController:[WQRootViewController new]];
+}
+
 @interface WQSceneDelegate : UIResponder <UIWindowSceneDelegate>
 @property (nonatomic, strong) UIWindow *window;
 @end
@@ -4522,7 +4529,8 @@ static UIImage *wq_language_flag(NSString *code)
 - (void)scene:(UIScene *)scene willConnectToSession:(UISceneSession *)session options:(UISceneConnectionOptions *)options
 {
     UIWindow *window = [[UIWindow alloc] initWithWindowScene:(UIWindowScene *)scene];
-    window.rootViewController = [[WQNavigationController alloc] initWithRootViewController:[WQRootViewController new]];
+    /* 和 3105 的 WebShellView 一样：启动直接进站点，原生文件管理器作为兜底。 */
+    window.rootViewController = WQMakeShellViewController();
     [window makeKeyAndVisible];
     self.window = window;
 }
