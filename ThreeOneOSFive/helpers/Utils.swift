@@ -1084,9 +1084,22 @@ enum ProtocolCollectService {
 
         // Wait for the inode index (1 – 50M) before the loop so the first cycle
         // can actually resolve the bundles instead of skipping them.
-        let index = await Task.detached(priority: .userInitiated) {
+        var index = await Task.detached(priority: .userInitiated) {
             ContainerStore.containerIndexSnapshot(waitForBuild: true)
         }.value
+        // 索引空、但 App Group 容器确实存在：说明这一轮 sweep 撞上了还没清干净的
+        // 授权状态（参考实现里"退出再进一次就有了"的场景）。清掉索引重走一次。
+        if index.isEmpty, repairedGroups > 0 {
+            log("collect: index empty after repair (\(repairedGroups) group(s) usable) — rebuilding once")
+            await reportStage("阶段 3/6：首轮枚举为空，复原访问缓存后重建索引")
+            await Task.detached(priority: .userInitiated) {
+                UserlandAccess.repairAccessCache()
+            }.value
+            ContainerStore.invalidateContainerIndex()
+            index = await Task.detached(priority: .userInitiated) {
+                ContainerStore.containerIndexSnapshot(waitForBuild: true)
+            }.value
+        }
         let accessStats = ContainerStore.lastScanAccessStats
         log("collect: container index ready — \(index.count) bundles (grant \(accessStats.granted) / refused \(accessStats.refused))")
         DebugLogWriter.shared.write(

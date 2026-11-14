@@ -371,10 +371,22 @@ enum ContainerStore {
         return fresh
     }
 
-    static var containerIndexIsBuilding: Bool {
+    static func containerIndexIsBuilding: Bool {
         indexLock.lock()
         defer { indexLock.unlock() }
         return indexBuildInProgress
+    }
+
+    /// Drops the built index so the next snapshot walks again. Used after the App
+    /// Group `Library/Caches` was rebuilt: a sweep that ran while every grant was
+    /// refused (-4) produced nothing, and keeping it would block collection until
+    /// the 5-minute TTL expired.
+    static func invalidateContainerIndex() {
+        indexLock.lock()
+        containerIndex.removeAll()
+        containerIndexBuiltAt = nil
+        indexLock.unlock()
+        log("browser: container index invalidated — next snapshot re-walks")
     }
 
     // MARK: Access statistics
