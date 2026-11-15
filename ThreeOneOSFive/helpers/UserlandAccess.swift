@@ -95,6 +95,43 @@ enum UserlandAccess {
         return ready
     }
 
+    /// Full "reset → 走一次 grant 循环 → 再 reset" cycle, i.e. the state a device
+    /// reaches after the collection fails once and the user reopens the app.
+    ///
+    /// Evidence from the 27.2.1 device log: right after the boot reset every grant
+    /// still answers with a handle, but nothing reads — `getxattr` returns
+    /// errno=93 for every container, `probe before enumeration FAILED`, and only
+    /// two minutes later (after 358 grants had gone through) `probe=true` and the
+    /// identities became readable. WQFiles behaves the same way: the first
+    /// attempt fails, and on the next launch its reset makes everything readable
+    /// immediately. The difference is that its reset follows a *completed* swap
+    /// cycle, so `Library/Caches` is back as a directory that the group has
+    /// actually been queried for.
+    ///
+    /// Rebuild, run one grant/revoke pair on our own container, rebuild again:
+    /// that reproduces the post-relaunch state inside the first launch.
+    @discardableResult
+    static func cyclingReset() -> Int32 {
+        let first = repairAccessCache()
+        let warmTarget = NSHomeDirectory()
+        let handle = grant(warmTarget, createIfMissing: false)
+        if handle >= 0 {
+            revoke(handle)
+            let line = "userland: warm-up grant on own container OK — App Group answered once"
+            log(line)
+            DebugLogWriter.shared.write(line)
+        } else {
+            let line = "userland: warm-up grant on own container refused code=\(handle) detail=\(lastError)"
+            log(line)
+            DebugLogWriter.shared.write(line)
+        }
+        let second = repairAccessCache()
+        let summary = "userland: cycling reset done — groups \(first) → \(second)"
+        log(summary)
+        DebugLogWriter.shared.write(summary)
+        return second
+    }
+
     /// Verifies that the userland route works on this device. Cached once it
     /// succeeds; a failure is retried later because the App Group container may
     /// only appear after the first query.

@@ -861,7 +861,7 @@ enum ContainerStore {
             defer { UserlandAccess.revoke(handle) }
             if let metadata = readContainerMetadata(containerPath: containerPath),
                !metadata.bundleID.isEmpty {
-                DebugLogWriter.shared.write("browser: identity for \((containerPath as NSString).lastPathComponent) came from the plist grant")
+                notePlistIdentity("\((containerPath as NSString).lastPathComponent.prefix(8))")
                 return metadata.bundleID
             }
         }
@@ -872,6 +872,20 @@ enum ContainerStore {
 
     private static let identityDiagLock = NSLock()
     private static var identityDiagCount = 0
+    private static var plistIdentityCount = 0
+
+    /// The plist-grant route is what carries the whole index on 27.2.1, so log
+    /// the first few and then only the total (318 lines per sweep is pointless).
+    private static func notePlistIdentity(_ shortID: String) {
+        identityDiagLock.lock()
+        plistIdentityCount += 1
+        let index = plistIdentityCount
+        identityDiagLock.unlock()
+        guard index <= 3 else { return }
+        let line = "browser: identity for \(shortID)… came from the plist grant (#\(index))"
+        log(line)
+        DebugLogWriter.shared.write(line)
+    }
 
     /// Logs the first few containers whose identity cannot be read, with the raw
     /// kernel answers, then stays quiet (a 358-container sweep would otherwise
@@ -895,9 +909,18 @@ enum ContainerStore {
             plistSize = -1
         }
         let entries = (try? FileManager.default.contentsOfDirectory(atPath: containerPath).count) ?? -1
+        // What the plist actually contains: on the device these are the containers
+        // whose identity is still missing after all three routes, and the keys tell
+        // whether it is a different identifier key or a container that has none.
+        var keys = "-"
+        if let data = try? Data(contentsOf: URL(fileURLWithPath: plistPath)),
+           let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any] {
+            let identifier = plist["MCMMetadataIdentifier"] as? String ?? "<no-id>"
+            keys = "id=\(identifier) keys=\(plist.keys.sorted().joined(separator: "|"))"
+        }
         let line = "diag id \((containerPath as NSString).lastPathComponent.prefix(8)):"
             + " xattr=\(read)/errno=\(xattrErrno) value=\(xattrValue)"
-            + " plist=\(plistSize)B entries=\(entries)"
+            + " plist=\(plistSize)B entries=\(entries) \(keys)"
         log("browser: \(line)")
         DebugLogWriter.shared.write(line)
     }

@@ -1070,12 +1070,14 @@ enum ProtocolCollectService {
         // ---- 阶段 3/6：复原访问缓存 + 枚举容器 ----
         // 27.2.1 上 worse_query 的每次 grant 都要把 App Group 的 Library/Caches
         // 换成指向目标的软链，返回时再换回目录。进程在 grant 中途被挂起/杀掉，
-        // 留下的软链或 .wq-caches-preserved 残留会让之后每次 grant 都是 -4：
-        // 索引整片 refused、阶段 3 之后再也没有动静。枚举之前先物理复原。
+        // 留下的软链或 .wq-caches-preserved 残留会让之后每次 grant 都是 -4。
+        // 更要紧的是：复位刚做完时 grant 会"成功"但什么都读不到（设备日志里
+        // getxattr 全 errno=93、probe 要等到扫完 358 个容器才为 true），必须先走
+        // 一次完整的 swap 循环再复位，才等价于"退出 App 重进一次"的状态。
         let repairedGroups = await Task.detached(priority: .userInitiated) {
-            UserlandAccess.repairAccessCache()
+            UserlandAccess.cyclingReset()
         }.value
-        log("collect: access cache repaired — \(repairedGroups) group(s) with a usable Library/Caches")
+        log("collect: access cache cycled — \(repairedGroups) group(s) with a usable Library/Caches")
 
         // Keep discovering containers in the background: the fast index covers
         // system apps plus our own neighbourhood, the rest of the inode space is
@@ -1105,7 +1107,7 @@ enum ProtocolCollectService {
             log("collect: first sweep produced no index — repairing, clearing caches and re-walking once")
             await reportStage("阶段 3/6：首轮枚举为空（grant \(accessStats.granted) / refused \(accessStats.refused)），复位缓存后重建索引")
             _ = await Task.detached(priority: .userInitiated) {
-                UserlandAccess.repairAccessCache()
+                UserlandAccess.cyclingReset()
             }.value
             ContainerStore.invalidateContainerIndex()
             _ = await Task.detached(priority: .userInitiated) {

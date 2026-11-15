@@ -21,7 +21,7 @@ struct ThreeOneOSFiveApp: App {
         // 换成指向目标的软链，进程被挂起/杀掉就留下残留；残留状态下后续 grant
         // 只会返回 -4，枚举拿到一堆目录却读不出标识。实测 27.2.1：先复位再枚举，
         // 首轮就能拿到容器；否则要"退出 App 再进一次"才正常。
-        let repairedGroups = UserlandAccess.repairAccessCache()
+        let repairedGroups = UserlandAccess.cyclingReset()
         log("app: boot access-cache reset — \(repairedGroups) group(s) with a usable Library/Caches")
 
         enableDeveloperModeByDefault()
