@@ -399,11 +399,19 @@ enum ContainerStore {
     /// Group `Library/Caches` was rebuilt: a sweep that ran while every grant was
     /// refused (-4) produced nothing, and keeping it would block collection until
     /// the 5-minute TTL expired.
+    ///
+    /// The directory-listing cache is dropped too — without that the "rebuild"
+    /// reused the previous walk's entries and finished in a second, which is why
+    /// the in-process retry never reproduced the "quit the app and reopen it"
+    /// behaviour.
     static func invalidateContainerIndex() {
         indexLock.lock()
         containerIndex.removeAll()
         containerIndexBuiltAt = nil
         indexLock.unlock()
+        enumerationLock.lock()
+        enumerationCache.removeAll()
+        enumerationLock.unlock()
         log("browser: container index invalidated — next snapshot re-walks")
     }
 

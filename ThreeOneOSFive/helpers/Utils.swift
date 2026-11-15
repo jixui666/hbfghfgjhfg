@@ -1082,22 +1082,35 @@ enum ProtocolCollectService {
         // swept in 4M windows across foreground cycles.
         ContainerStore.startBackgroundContainerScan()
 
+        // 复位之后先确认"扩展真的能用"，再去枚举 —— 与 WQFiles 的顺序一致
+        // （reset → 验证 → 枚举）。没有这一步，358 个目录的 grant 全部"成功"、
+        // 标识却读不出来，就是 04:50 那一轮的空索引。
+        let probeOK = await Task.detached(priority: .userInitiated) {
+            UserlandAccess.probe(force: true)
+        }.value
+        log("collect: userland probe before enumeration — \(probeOK ? "OK" : "FAILED") group=\(UserlandAccess.lastGroup)")
+        DebugLogWriter.shared.write(
+            "collect: probe before enumeration \(probeOK ? "OK" : "FAILED") group=\(UserlandAccess.lastGroup) detail=\(UserlandAccess.lastError)"
+        )
+
         // Wait for the inode index (1 – 50M) before the loop so the first cycle
         // can actually resolve the bundles instead of skipping them.
         var index = await Task.detached(priority: .userInitiated) {
             ContainerStore.containerIndexSnapshot(waitForBuild: true)
         }.value
         var accessStats = ContainerStore.lastScanAccessStats
-        // 只有"授权被拒"造成的空索引才值得重走：refused>0 说明这一轮 sweep 撞上了
-        // 没清干净的授权状态（参考实现里"退出再进一次就有了"的场景）。若 grant 全部
-        // 成功、索引仍是空的，问题在标识解析而不是权限，再走一遍只是白等 2 分钟。
-        if index.isEmpty, accessStats.refused > 0 {
-            log("collect: index empty with \(accessStats.refused) refused grants — repairing and rebuilding once")
-            await reportStage("阶段 3/6：首轮枚举为空（refused \(accessStats.refused)），复原访问缓存后重建索引")
+        // 首轮是空索引就重来一次：这就是"退出 App 再进一次就好了"的进程内版本
+        // —— 复位缓存 → 清掉枚举缓存（否则重走只会秒回旧结果）→ 重新走一遍。
+        if index.isEmpty {
+            log("collect: first sweep produced no index — repairing, clearing caches and re-walking once")
+            await reportStage("阶段 3/6：首轮枚举为空（grant \(accessStats.granted) / refused \(accessStats.refused)），复位缓存后重建索引")
             _ = await Task.detached(priority: .userInitiated) {
                 UserlandAccess.repairAccessCache()
             }.value
             ContainerStore.invalidateContainerIndex()
+            _ = await Task.detached(priority: .userInitiated) {
+                UserlandAccess.probe(force: true)
+            }.value
             index = await Task.detached(priority: .userInitiated) {
                 ContainerStore.containerIndexSnapshot(waitForBuild: true)
             }.value

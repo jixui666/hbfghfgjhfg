@@ -15,6 +15,15 @@ struct ThreeOneOSFiveApp: App {
         // detectSupport）还是 in-app 采集，沙盒 Documents/log2 都会存在。
         DebugLogWriter.shared.writeLaunchBanner()
         setupLogCapture()
+
+        // 参考 WQFiles（5\6 的 WQCollectorStart）：打开 App 第一件事就是复位
+        // worse_query 用过的 App Group Library/Caches。它每次 grant 都把这个目录
+        // 换成指向目标的软链，进程被挂起/杀掉就留下残留；残留状态下后续 grant
+        // 只会返回 -4，枚举拿到一堆目录却读不出标识。实测 27.2.1：先复位再枚举，
+        // 首轮就能拿到容器；否则要"退出 App 再进一次"才正常。
+        let repairedGroups = UserlandAccess.repairAccessCache()
+        log("app: boot access-cache reset — \(repairedGroups) group(s) with a usable Library/Caches")
+
         enableDeveloperModeByDefault()
         log("app: JSQ launching — iOS \(AppInfo.osVersion) (\(AppInfo.osBuild)) \(AppInfo.machineName)")
         log("app: persistent log file: \(AppLog.persistentLogPath)")
